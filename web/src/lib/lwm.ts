@@ -310,3 +310,188 @@ export function fmtSigned(v: number | null | undefined, unit: string, digits = 1
   const s = v > 0 ? '+' : v < 0 ? '−' : '';
   return `${s}${Math.abs(v).toFixed(digits)} ${unit}`;
 }
+
+// ------------------------------------------------------- client-side field maths
+const KM_PER_DEG_LAT = 110.574;
+
+export interface WindUV {
+  u: number | null;
+  v: number | null;
+}
+
+/**
+ * Wind vector from the published speed + meteorological FROM bearing (radians clockwise from north):
+ * u is the eastward and v the northward component of the airflow, so the vector points where the wind
+ * blows *to*. Angles are never interpolated — only these components are.
+ */
+export function windUVfromSpeedDir(windSpeedMs: number | null | undefined, windDirectionRad: number | null | undefined): WindUV {
+  if (windSpeedMs == null || !Number.isFinite(windSpeedMs) || windDirectionRad == null || !Number.isFinite(windDirectionRad)) {
+    return { u: null, v: null };
+  }
+  return { u: -windSpeedMs * Math.sin(windDirectionRad), v: -windSpeedMs * Math.cos(windDirectionRad) };
+}
+
+/** Ground distance in km on the planar campus approximation the server IDW uses. */
+export function distKm(lat: number, lon: number, sLat: number, sLon: number): number {
+  const cosLat = Math.cos((((lat + sLat) / 2) * Math.PI) / 180);
+  const dx = (lon - sLon) * KM_PER_DEG_LAT * cosLat;
+  const dy = (lat - sLat) * KM_PER_DEG_LAT;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
+ * IDW at one point over the site samples (weights 1/d²; a site closer than a metre to the point just
+ * gives its value) — the same maths the server runs for the coloured field, so the wind arrows and the
+ * isobar labels land where the painted field says they should.
+ */
+export function idwAtPoint(sites: SiteSample[], lat: number, lon: number): number | null {
+  let wsum = 0;
+  let vsum = 0;
+  for (const s of sites) {
+    if (s.value == null || !Number.isFinite(s.value) || !Number.isFinite(s.lat) || !Number.isFinite(s.lon)) continue;
+    const d = distKm(lat, lon, s.lat, s.lon);
+    if (d < 1e-6) return s.value;
+    const w = 1 / (d * d);
+    wsum += w;
+    vsum += w * s.value;
+  }
+  return wsum > 0 ? vsum / wsum : null;
+}
+
+/** IDW of the wind components: the mean airflow at the point, interpolated from u/v, never from angles. */
+export function windUVAtPoint(sites: { lat: number; lon: number; u: number | null; v: number | null }[], lat: number, lon: number): WindUV & { speedMs: number | null } {
+  const u = idwAtPoint(sites.map((s) => ({ id: '', lat: s.lat, lon: s.lon, value: s.u })), lat, lon);
+  const v = idwAtPoint(sites.map((s) => ({ id: '', lat: s.lat, lon: s.lon, value: s.v })), lat, lon);
+  if (u == null || v == null) return { u: null, v: null, speedMs: null };
+  return { u, v, speedMs: Math.hypot(u, v) };
+}
+
+/** Lat/lon of grid node (r, c) — the server grid is node-centred, row 0 on the north edge. */
+export function nodeLatLng(bounds: GridBounds, cols: number, rows: number, r: number, c: number): { lat: number; lon: number } {
+  const lat = rows === 1 ? bounds.maxLat : bounds.maxLat - ((bounds.maxLat - bounds.minLat) * r) / (rows - 1);
+  const lon = cols === 1 ? bounds.minLon : bounds.minLon + ((bounds.maxLon - bounds.minLon) * c) / (cols - 1);
+  return { lat, lon };
+}
+
+/** km per canvas pixel on each axis, for turning alert radii into ring radii. */
+export function kmPxScale(bounds: GridBounds, widthPx: number, heightPx: number): { kmPerPxX: number; kmPerPxY: number } {
+  const meanLat = (((bounds.minLat + bounds.maxLat) / 2) * Math.PI) / 180;
+  const kmLon = (bounds.maxLon - bounds.minLon) * KM_PER_DEG_LAT * Math.cos(meanLat) || 1e-9;
+  const kmLat = (bounds.maxLat - bounds.minLat) * KM_PER_DEG_LAT || 1e-9;
+  return { kmPerPxX: kmLon / widthPx, kmPerPxY: kmLat / heightPx };
+}
+
+export interface ContourLevel {
+  level: number;
+  /** Cell-local segment endpoints in grid coordinates ([col, row] fractions of the node index). */
+  lines: [number, number][][];
+}
+
+/**
+ * Marching squares over the IDW grid: one segment per cell whose edges cross the level. Cells with a
+ * missing value are skipped; the saddle case is resolved by the cell-centre mean. Coordinates come back
+ * in node space (col 0..cols-1, row 0..rows-1) so the caller can project them like the field.
+ */
+export function marchingSquares(grid: IdwGrid, step: number): ContourLevel[] {
+  const lo = grid.min;
+  const hi = grid.max;
+  if (lo == null || hi == null || !(hi > lo) || !(step > 0)) return [];
+  const { cols, rows, values } = grid;
+  const wanted: number[] = [];
+  for (let l = Math.ceil(lo / step) * step; l < hi; l += step) wanted.push(Math.round(l * 1e6) / 1e6);
+  if (wanted.length === 0) return [];
+  const at = (r: number, c: number): number | null => values[r * cols + c] ?? null;
+  const corners: [number, number][] = [
+    [0, 0],
+    [1, 0],
+    [1, 1],
+    [0, 1],
+  ];
+  const out: ContourLevel[] = [];
+  for (const level of wanted) {
+    const segs: [number, number][][] = [];
+    for (let r = 0; r < rows - 1; r++) {
+      for (let c = 0; c < cols - 1; c++) {
+        const v = [at(r, c), at(r, c + 1), at(r + 1, c + 1), at(r + 1, c)];
+        if (v.some((x) => x == null)) continue;
+        const vals = v as number[];
+        const up = vals.map((x) => (x > level ? 1 : 0));
+        const sum = up[0]! + up[1]! + up[2]! + up[3]!;
+        if (sum === 0 || sum === 4) continue;
+        const crossings: [number, number][] = [];
+        for (let i = 0; i < 4; i++) {
+          const va = vals[i]!;
+          const vb = vals[(i + 1) % 4]!;
+          if (va === vb) continue;
+          const t = (level - va) / (vb - va);
+          const pa = corners[i]!;
+          const pb = corners[(i + 1) % 4]!;
+          crossings.push([c + pa[0] + (pb[0] - pa[0]) * t, r + pa[1] + (pb[1] - pa[1]) * t]);
+        }
+        if (crossings.length === 2) {
+          segs.push([crossings[0]!, crossings[1]!]);
+        } else if (crossings.length === 4) {
+          // saddle: the centre value decides which pair of edges joins
+          const centreAbove = (vals[0]! + vals[1]! + vals[2]! + vals[3]!) / 4 > level ? 1 : 0;
+          if (up[0] === centreAbove) {
+            segs.push([crossings[0]!, crossings[1]!]);
+            segs.push([crossings[2]!, crossings[3]!]);
+          } else {
+            segs.push([crossings[0]!, crossings[3]!]);
+            segs.push([crossings[1]!, crossings[2]!]);
+          }
+        }
+      }
+    }
+    if (segs.length > 0) out.push({ level, lines: segs });
+  }
+  return out;
+}
+
+/** Isobar spacing: every 1 hPa, coarsened only when the field spans so much that 1 hPa would blur. */
+export function isobarStep(span: number | null): number {
+  if (span == null || !(span > 0)) return 1;
+  if (span > 60) return 5;
+  if (span > 24) return 2;
+  return 1;
+}
+
+// ---------------------------------------------------------------- wind barb
+export interface WindBarbClasses {
+  pennants: number;
+  full: number;
+  half: boolean;
+}
+
+/** Classic barb encoding of a wind speed in m/s: pennant 20, full barb 5, half barb 2.5. */
+export function windBarbClasses(speedMs: number | null | undefined): WindBarbClasses {
+  if (speedMs == null || !Number.isFinite(speedMs) || speedMs < 0) return { pennants: 0, full: 0, half: false };
+  let rest = Math.round(speedMs * 2) / 2;
+  const pennants = Math.min(2, Math.floor(rest / 20));
+  rest -= pennants * 20;
+  const full = Math.floor(rest / 5);
+  return { pennants, full, half: rest - full * 5 >= 2.5 };
+}
+
+/** Below 0.5 m/s the wind is drawn as a calm circle instead of a staff. */
+export function isCalmWind(speedMs: number | null | undefined): boolean {
+  return speedMs != null && Number.isFinite(speedMs) && speedMs < 0.5;
+}
+
+// ------------------------------------------------------------- value formats
+/** Format one map-field value for display: kelvin variables arrive as Celsius, everything else as is. */
+export function fmtMapValue(variable: string, v: number | null | undefined, digits = 1): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  if (variable === 'temperature_k' || variable === 'dew_point_k') return `${(v - 273.15).toFixed(digits)} °C`;
+  return v.toFixed(digits);
+}
+
+// ------------------------------------------------------------- time-lapse
+/** Evenly spaced keyframe times covering `spanMs` and ending at `endTs` (inclusive). */
+export function timeLapseTimes(endTs: number, count: number, spanMs: number): number[] {
+  const n = Math.max(1, Math.floor(count));
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) out.push(Math.round(endTs - spanMs + (spanMs * i) / (n - 1 || 1)));
+  return out;
+}
+

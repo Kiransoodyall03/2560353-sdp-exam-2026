@@ -1,21 +1,23 @@
-// LWM main view: the interpolated weather map (variable + time, so it scrubs in replay), the five site
-// cards with their controls, a wind rose, the lightning scope, the battery forecast and the sonic drift
-// check. Everything numeric is computed on the server and streamed on the `lwm` channel; the page fetches
-// the map field, the campus outline and per-site history over REST, and every control goes through the
-// server pipeline so a refusal reads as the controller's own reason.
+// LWM main view: the interpolated weather map (variable + time, so it scrubs in replay), the storm tracker
+// card, the impact panel across services, the five site cards in station-model form, a wind rose (per site
+// or all sites combined), the lightning scope, the battery forecast, the sonic drift check and the site
+// history as small multiples. Everything numeric is computed on the server and streamed on the `lwm`
+// channel; the page fetches the map field, the campus outline and per-site history over REST, and every
+// control goes through the server pipeline so a refusal reads as the controller's own reason.
 import { useEffect, useMemo, useState } from 'react';
-import { Chart, type ChartAxis, type ChartSeries } from '../components/Chart';
 import { CommandHistory } from '../components/CommandHistory';
 import { Presets } from '../components/ControlPanel';
 import { BatteryForecast, type BatteryRow } from '../components/lwm/BatteryForecast';
+import { ImpactPanel } from '../components/lwm/ImpactPanel';
 import { LightningMap } from '../components/lwm/LightningMap';
 import { SiteCards } from '../components/lwm/SiteCards';
+import { SiteMultiples } from '../components/lwm/SiteMultiples';
 import { SonicDiff } from '../components/lwm/SonicDiff';
+import { StormTracker } from '../components/lwm/StormTracker';
 import { WeatherMap } from '../components/lwm/WeatherMap';
 import { WindRose } from '../components/lwm/WindRose';
 import { ErrorBox, KpiTile, Loading, Panel, SeverityBadge, StatusPill } from '../components/ui';
 import { errorText } from '../lib/api';
-import { useThemeColors } from '../lib/colors';
 import { fmtNum, fmtTime } from '../lib/format';
 import {
   fetchLwmGeoJson,
@@ -29,6 +31,7 @@ import {
 } from '../lib/lwm';
 
 const HOUR_MS = 3_600_000;
+const MAP_SCRUB_MS = 6 * HOUR_MS;
 const WINDOWS = [
   { hours: 1, label: '1 h' },
   { hours: 6, label: '6 h' },
@@ -36,9 +39,50 @@ const WINDOWS = [
 ];
 const FALLBACK_VARIABLES = ['temperature_k', 'humidity_pct', 'pressure_hpa', 'wind_speed_ms', 'wind_gust_ms', 'rainfall_mm', 'irradiance_wm2', 'battery_v', 'dew_point_k'];
 
+// The LWM page owns the styles for its own richer visualisations so nothing outside these three files
+// changes. Every colour is a design token from tokens.css (rule: no raw hex outside colors.ts); the only
+// gradient is the value ramp the WeatherMap legend already draws. Layout uses the shared spacing/radius
+// tokens so the section still reads as one surface with the rest of the app.
+const LWM_STYLES = `
+.storm-tracker { display: flex; flex-direction: column; gap: var(--space-3); }
+.storm-tracker .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-2) var(--space-4); margin: 0; }
+.storm-tracker .facts > div { display: flex; flex-direction: column; gap: 2px; }
+.storm-tracker dt { font: 500 11px/14px var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-muted); }
+.storm-tracker dd { margin: 0; font: 500 15px/20px var(--font-data); font-variant-numeric: tabular-nums; color: var(--ink); }
+.storm-status { margin: 0; padding: var(--space-2) var(--space-3); background: var(--surface-sunken); border-left: 3px solid var(--accent); color: var(--ink); font: 400 14px/1.4 var(--font-ui); display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+
+.impact-panel { display: flex; flex-direction: column; gap: var(--space-3); }
+.impact-row { display: grid; grid-template-columns: 220px 1fr; gap: var(--space-3); align-items: center; }
+.impact-label { font: 500 12px/16px var(--font-ui); color: var(--ink-muted); letter-spacing: 0.02em; }
+.impact-caption { margin: 0; padding: var(--space-2) var(--space-3); background: var(--surface-sunken); border-left: 3px solid var(--accent); color: var(--ink); font: 400 14px/1.4 var(--font-ui); }
+@media (max-width: 720px) { .impact-row { grid-template-columns: 1fr; } }
+
+.site-station .station-model { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2) var(--space-3); margin-top: var(--space-2); padding: var(--space-2); background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-1); }
+.station-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.station-cell .kv-k { font: 500 10px/12px var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-muted); }
+.station-cell > span:not(.kv-k) { font: 500 14px/18px var(--font-data); font-variant-numeric: tabular-nums; color: var(--ink); }
+.station-cell--wind { grid-column: span 2; }
+.station-wind { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.site-trend { display: inline-flex; align-items: center; gap: 4px; font: 500 12px/14px var(--font-data); }
+.site-battery { display: inline-flex; align-items: center; gap: var(--space-2); }
+.site-battery__bar { display: inline-block; width: 60px; height: 8px; background: var(--surface-panel); border: 1px solid var(--line); border-radius: var(--radius-1); overflow: hidden; }
+.site-battery__fill { display: block; height: 100%; }
+.station-spark { margin-top: var(--space-2); display: flex; flex-direction: column; gap: 4px; }
+.site-spark { width: 100%; max-width: 220px; height: 34px; }
+
+.small-multiples { display: flex; flex-direction: column; gap: var(--space-1); }
+.small-multiples__svg { width: 100%; height: auto; display: block; }
+.sm-title { font: 600 11px/14px var(--font-ui); }
+.sm-unit { font: 500 10px/12px var(--font-data); }
+.sm-ymax, .sm-ymin, .sm-tick { font: 500 10px/12px var(--font-data); font-variant-numeric: tabular-nums; }
+
+.rose-legend { display: flex; flex-wrap: wrap; gap: var(--space-2); list-style: none; padding: 0; margin: var(--space-1) 0 0; justify-content: center; }
+.rose-legend li { display: inline-flex; align-items: center; gap: 4px; }
+.rose-swatch { display: inline-block; width: 14px; height: 8px; border-radius: 2px; border: 1px solid var(--line); }
+`;
+
 export function LwmPage() {
   const { network, status } = useLwmLive();
-  const colours = useThemeColors();
 
   // map: variable + optional scrub time (null = follow the sim clock, so replay advances it)
   const [variable, setVariable] = useState('temperature_k');
@@ -48,8 +92,11 @@ export function LwmPage() {
   const [mapError, setMapError] = useState<string | null>(null);
   const [geojson, setGeojson] = useState<unknown | null>(null);
 
-  // wind rose + site history share the window selector
-  const [roseSite, setRoseSite] = useState('lwm-1');
+  // wind rose scope + window
+  const [roseScope, setRoseScope] = useState('all');
+  const [roseHours, setRoseHours] = useState(6);
+
+  // site history window + which site
   const [histSite, setHistSite] = useState('lwm-3');
   const [hours, setHours] = useState(1);
   const [hist, setHist] = useState<LwmSiteHistory | null>(null);
@@ -113,7 +160,8 @@ export function LwmPage() {
   }, [histSite, hours]);
 
   const siteIds = useMemo(() => (network ? network.sites.map((s) => s.id) : []), [network]);
-  const roseBins = useMemo(() => network?.sites.find((s) => s.id === roseSite)?.derived.windRose ?? [], [network, roseSite]);
+  const roseSiteIds = useMemo(() => (siteIds.length ? siteIds : ['lwm-1']), [siteIds]);
+  const roseSource = useMemo(() => ({ ids: roseSiteIds, hours: roseHours }), [roseSiteIds, roseHours]);
 
   const batteryRows: BatteryRow[] = useMemo(
     () => (network?.sites ?? []).map((s) => ({ id: s.id, intervalS: s.sampleIntervalS, online: s.online, battery: s.derived.battery })),
@@ -121,6 +169,7 @@ export function LwmPage() {
   );
 
   const lwm3 = useMemo(() => network?.sites.find((s) => s.id === 'lwm-3') ?? null, [network]);
+  const histSiteDto = useMemo(() => network?.sites.find((s) => s.id === histSite) ?? null, [network, histSite]);
 
   // align the sonic temperature against the nearest main-thermometer reading for the drift trend
   const sonicSeries = useMemo(() => {
@@ -147,17 +196,6 @@ export function LwmPage() {
     return ts.length > 1 ? { ts, deltaK } : null;
   }, [hist]);
 
-  const histSeries = useMemo(() => {
-    if (!hist) return null;
-    const s = hist.series;
-    const toC = (v: (number | null)[]) => v.map((k) => (k == null ? null : k - 273.15));
-    return {
-      ts: s.ts,
-      tempWind: [toC(s.temperatureK), s.windSpeedMs, s.windGustMs],
-      pressBatt: [s.pressureHpa, s.batteryV],
-    };
-  }, [hist]);
-
   if (!network) return <Loading what="weather network" />;
 
   const limits = network.limits;
@@ -171,13 +209,15 @@ export function LwmPage() {
 
   const nowTs = network.ts;
   const gustAxis = Math.max(maxGust ?? 0, limits.highWindCritMs) * 1.2;
-  const scrubMin = nowTs != null ? nowTs - hours * HOUR_MS : 0;
+  const scrubMin = nowTs != null ? nowTs - MAP_SCRUB_MS : 0;
   const scrubMax = nowTs ?? 0;
   const scrubStep = nowTs != null ? Math.max(1000, Math.floor((scrubMax - scrubMin) / 400)) : 1000;
   const scrubbing = mapTs != null;
+  const latestStrikeTs = network.strikes.length ? network.strikes[network.strikes.length - 1]!.ts : null;
 
   return (
     <div className="page">
+      <style>{LWM_STYLES}</style>
       <h1>Weather</h1>
       {status !== 'open' && (
         <div className="flag warn">
@@ -234,45 +274,36 @@ export function LwmPage() {
         title="Interpolated field"
         actions={
           <div className="row gap">
-            <label className="field-inline">
-              <span className="muted small">Variable</span>
-              <select value={variable} onChange={(e) => setVariable(e.target.value)}>
-                {variables.map((v) => (
-                  <option key={v} value={v}>
-                    {mapVariableLabel(v)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <span className="muted small">{map ? mapVariableLabel(map.variable) : mapVariableLabel(variable)}</span>
             <StatusPill tone={scrubbing ? 'info' : 'ok'}>{scrubbing ? `at ${fmtTime(map?.ts ?? mapTs)}` : 'Live'}</StatusPill>
           </div>
         }
       >
-        <div className="row gap map-scrub">
-          <input
-            type="range"
-            min={scrubMin}
-            max={scrubMax}
-            step={scrubStep}
-            value={mapTs ?? scrubMax}
-            disabled={nowTs == null}
-            onChange={(e) => setMapTs(Number(e.target.value))}
-            aria-label="Map time"
-          />
-          <button type="button" className="arl-btn" onClick={() => setMapTs(null)} disabled={!scrubbing}>
-            Live
-          </button>
-        </div>
         {mapError && <ErrorBox>{mapError}</ErrorBox>}
-        {map ? (
-          <WeatherMap map={map} geojson={geojson} label={`${mapVariableLabel(map.variable)} field across the five weather sites`} />
-        ) : (
-          <Loading what="weather field" />
-        )}
+        <WeatherMap
+          map={map}
+          geojson={geojson}
+          sites={network.sites}
+          lightning={network.strikes}
+          limits={limits}
+          variable={variable}
+          onVariable={setVariable}
+          mapTs={mapTs}
+          onScrub={setMapTs}
+          scrubMin={scrubMin}
+          scrubMax={scrubMax}
+          scrubStep={scrubStep}
+          label={`${mapVariableLabel(variable)} field across the five weather sites`}
+        />
         <p className="muted small">
-          Inverse-distance interpolation over the five sites{map ? ` at ${fmtTime(map.ts)}` : ''}. Drag the slider to rewind into the
-          buffered history — the field is rebuilt from whatever each site last reported at that moment.
+          Inverse-distance interpolation over the five sites{map ? ` at ${fmtTime(map.ts)}` : ''}. The variable switcher, the 60-minute
+          time-lapse and the map scrub all work in replay: they ask the server for the field as it was at that moment. Wind arrows
+          interpolate the u/v components (never angles); isobars appear when pressure is selected.
         </p>
+      </Panel>
+
+      <Panel title="Storm tracker" actions={<span className="muted small">nearest strike, motion and time to the alert radius</span>}>
+        <StormTracker strikes={network.strikes} derived={light} limits={limits} now={nowTs} latestStrikeTs={latestStrikeTs} />
       </Panel>
 
       <Panel title="Sites" actions={<span className="muted small">latest readings, derived numbers and per-site controls</span>}>
@@ -283,25 +314,35 @@ export function LwmPage() {
         <Panel
           title="Wind rose"
           actions={
-            <select value={roseSite} onChange={(e) => setRoseSite(e.target.value)} aria-label="Wind rose site">
-              {(siteIds.length ? siteIds : ['lwm-1']).map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
+            <div className="row gap">
+              <div className="seg" role="group" aria-label="Wind rose window">
+                {WINDOWS.map((w) => (
+                  <button key={w.hours} type="button" className={roseHours === w.hours ? 'on' : ''} onClick={() => setRoseHours(w.hours)}>
+                    {w.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           }
         >
-          <WindRose bins={roseBins} label={`Wind rose for ${roseSite}`} />
+          <WindRose source={roseSource} scope={roseScope} onScopeChange={setRoseScope} siteIds={roseSiteIds} label={`Wind rose over ${roseHours} h`} />
         </Panel>
 
         <Panel
           title="Lightning"
-          actions={<StatusPill tone={light.withinMaxKm ? 'bad' : light.strikesLast10Min > 0 ? 'warn' : 'ok'}>{light.withinMaxKm ? 'Danger' : light.strikesLast10Min > 0 ? 'Active' : 'Quiet'}</StatusPill>}
+          actions={
+            <StatusPill tone={light.withinMaxKm ? 'bad' : light.strikesLast10Min > 0 ? 'warn' : 'ok'}>
+              {light.withinMaxKm ? 'Danger' : light.strikesLast10Min > 0 ? 'Active' : 'Quiet'}
+            </StatusPill>
+          }
         >
           <LightningMap strikes={network.strikes} limits={limits} derived={light} />
         </Panel>
       </div>
+
+      <Panel title="Weather impact on the other services" actions={<span className="muted small">last 3 h · shared time axis</span>}>
+        <ImpactPanel />
+      </Panel>
 
       <div className="lwm-grid">
         <Panel title="Battery forecast" actions={<span className="muted small">drain vs sample interval</span>}>
@@ -340,17 +381,8 @@ export function LwmPage() {
         }
       >
         {histError && <ErrorBox>{histError}</ErrorBox>}
-        {hist && histSeries && histSeries.ts.length > 1 ? (
-          <div className="charts">
-            <div>
-              <h3>Temperature and wind</h3>
-              <SiteChart ts={histSeries.ts} values={histSeries.tempWind} labels={['Temperature', 'Wind', 'Gust']} colors={[colours.ochre, colours.sunset, colours.dust]} axes={[{ scale: 'y', label: '°C' }, { scale: 'y2', label: 'm/s', side: 'right' }]} scales={['y', 'y2', 'y2']} />
-            </div>
-            <div>
-              <h3>Pressure and battery</h3>
-              <SiteChart ts={histSeries.ts} values={histSeries.pressBatt} labels={['Pressure', 'Battery']} colors={[colours.inkMuted, colours.accent]} axes={[{ scale: 'y', label: 'hPa' }, { scale: 'y2', label: 'V', side: 'right' }]} scales={['y', 'y2']} />
-            </div>
-          </div>
+        {hist && hist.series.ts.length > 1 ? (
+          <SiteMultiples hist={hist} site={histSiteDto} hours={hours} />
         ) : (
           <p className="muted small">Not enough samples in this window yet.</p>
         )}
@@ -391,24 +423,4 @@ export function LwmPage() {
       </Panel>
     </div>
   );
-}
-
-// A tiny wrapper so the two history charts share their series/axis wiring.
-function SiteChart({
-  ts,
-  values,
-  labels,
-  colors,
-  axes,
-  scales,
-}: {
-  ts: number[];
-  values: (number | null)[][];
-  labels: string[];
-  colors: string[];
-  axes: ChartAxis[];
-  scales: string[];
-}) {
-  const series: ChartSeries[] = labels.map((label, i) => ({ label, color: colors[i]!, scale: scales[i] }));
-  return <Chart ts={ts} values={values} series={series} axes={axes} height={200} />;
 }
