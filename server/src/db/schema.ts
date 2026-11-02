@@ -211,4 +211,61 @@ export const MIGRATIONS: string[] = [
     fuel_level_pct REAL
   );
   `,
+
+  /* 3 — LWM weather history: one row per site sample (backfill kept with its original ts) plus the
+     site-specific streams and the lightning strikes the map and the cards are drawn from. */ `
+  CREATE TABLE lwm_weather (
+    entity TEXT NOT NULL,
+    sim_ts INTEGER NOT NULL,
+    temperature_k REAL,
+    humidity_pct REAL,
+    pressure_hpa REAL,
+    wind_speed_ms REAL,
+    wind_gust_ms REAL,
+    wind_direction_rad REAL,
+    rainfall_mm REAL,
+    irradiance_wm2 REAL,
+    lightning_strikes INTEGER,
+    battery_v REAL,
+    status INTEGER,
+    backfill INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (entity, sim_ts)
+  ) WITHOUT ROWID;
+  CREATE INDEX lwm_weather_ts ON lwm_weather(sim_ts);
+
+  CREATE TABLE lwm_sonic (
+    sim_ts INTEGER PRIMARY KEY,
+    wind_u_ms REAL,
+    wind_v_ms REAL,
+    wind_w_ms REAL,
+    turbulence_intensity REAL,
+    gust_factor REAL,
+    direction_std_rad REAL,
+    sonic_temperature_k REAL,
+    backfill INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE lwm_soiling (
+    sim_ts INTEGER PRIMARY KEY,
+    reference_irradiance_wm2 REAL,
+    exposed_irradiance_wm2 REAL,
+    soiling_ratio REAL,
+    backfill INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE lwm_pan (
+    sim_ts INTEGER PRIMARY KEY,
+    pan_level_mm REAL,
+    evaporation_mm REAL,
+    backfill INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE lwm_lightning (
+    sim_ts INTEGER PRIMARY KEY,
+    distance_km REAL,
+    bearing_rad REAL,
+    detected_by_json TEXT NOT NULL DEFAULT '[]'
+  );
+  CREATE INDEX lwm_lightning_ts ON lwm_lightning(sim_ts);
+  `,
 ];

@@ -102,6 +102,11 @@ const REASON_TEXT: Record<string, string> = {
   not_running: 'The generators are not running',
   min_active_dishes: 'This would drop the dishes in service below the 80 minimum',
   solar_disabled_in_daylight: 'Disabling the solar array in daylight leaves the load to the batteries',
+  // LWM safeguards
+  lightning_proximity: 'Lightning is close: technician visits cannot start until the Lightning Proximity alert clears',
+  not_needed: 'The pan is already above 195 mm: a refill is not needed',
+  sensor_disturbed: 'The gust is above the High Wind warning limit: a recalibration would be disturbed',
+  backfill_in_progress: 'The site is replaying buffered samples: recalibration must wait until it catches up',
 };
 
 /** Maps an ack/guard reason to plain language; unknown codes are shown as-is (never hidden). */
