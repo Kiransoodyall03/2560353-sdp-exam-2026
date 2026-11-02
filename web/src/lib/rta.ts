@@ -1,6 +1,9 @@
 // RTA live channel: snapshot {dishes, subarrays, global, scans} + keyed patches dish:/subarray:/scan:/global.
+// While a replay session is active the live channel is closed (browser connection budget) and the session's
+// folded view — the same snapshot shape — is fed through the identical parser, so the page follows the cursor.
 import { useMemo } from 'react';
 import type { DishDTO, RtaGlobalDTO, ScanSummaryDTO, SubarrayDTO } from '../../../shared/types';
+import { useServiceState } from './service-state';
 import { useKeyedChannel, type SseStatus } from './sse';
 
 interface Snapshot {
@@ -30,12 +33,17 @@ export interface RtaLive {
 }
 
 export function useRtaLive(): RtaLive {
-  const { items, status, simTs } = useKeyedChannel<unknown>('rta', fromSnapshot);
+  const svc = useServiceState('rta');
+  const { items, status, simTs } = useKeyedChannel<unknown>(svc ? null : 'rta', fromSnapshot);
+  const replayItems = useMemo(() => (svc?.view ? fromSnapshot(svc.view) : null), [svc]);
+  const source = replayItems ?? items;
+  const srcStatus: SseStatus = svc ? 'open' : status;
+  const srcSimTs = svc ? (svc.state.lastSimTs ?? null) : simTs;
   return useMemo(() => {
     const dishes: DishDTO[] = [];
     const subarrays: SubarrayDTO[] = [];
     const scans: ScanSummaryDTO[] = [];
-    for (const [k, v] of Object.entries(items)) {
+    for (const [k, v] of Object.entries(source)) {
       if (k.startsWith('dish:')) dishes.push(v as DishDTO);
       else if (k.startsWith('subarray:')) subarrays.push(v as SubarrayDTO);
       else if (k.startsWith('scan:')) scans.push(v as ScanSummaryDTO);
@@ -47,12 +55,12 @@ export function useRtaLive(): RtaLive {
       dishes,
       dishById: new Map(dishes.map((d) => [d.id, d])),
       subarrays,
-      global: (items['global'] as RtaGlobalDTO | undefined) ?? null,
+      global: (source['global'] as RtaGlobalDTO | undefined) ?? null,
       scans,
-      status,
-      simTs,
+      status: srcStatus,
+      simTs: srcSimTs,
     };
-  }, [items, status, simTs]);
+  }, [source, srcStatus, srcSimTs]);
 }
 
 /** Sub-array outlines follow the series order: accent, sunset, ochre, dust. */

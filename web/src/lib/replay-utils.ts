@@ -158,3 +158,58 @@ export function markerTick(marker: ReplayMarker, win: Window): TickGeom {
   }
   return { left, className };
 }
+
+/** A scan drawn as a thin bar spanning its start→end, clamped to the window (an unfinished scan runs to the edge). */
+export interface ScanBarGeom {
+  scanId: string;
+  left: string;
+  width: string;
+}
+
+/**
+ * Pair scan_start / scan_end markers into bars over the window. Only scans whose start falls in the window are
+ * drawn; a missing end (still running, or ended after the window) clamps to the right edge. Kept pure so the
+ * geometry is unit-testable and shared by the bottom-bar track (STEP 3) and the Replay page (STEP 4).
+ */
+export function scanBars(markers: ReplayMarker[], win: Window): ScanBarGeom[] {
+  const span = win.to - win.from;
+  if (span <= 0) return [];
+  const starts = new Map<string, number>();
+  const ends = new Map<string, number>();
+  for (const m of markers) {
+    if (!m.scanId) continue;
+    if (m.kind === 'scan_start') starts.set(m.scanId, m.ts);
+    else if (m.kind === 'scan_end') ends.set(m.scanId, m.ts);
+  }
+  const out: ScanBarGeom[] = [];
+  for (const [scanId, s] of starts) {
+    const e = ends.get(scanId) ?? win.to;
+    const from = clamp(Math.min(s, e), win.from, win.to);
+    const to = clamp(Math.max(s, e), win.from, win.to);
+    const left = ((from - win.from) / span) * 100;
+    // A hairline minimum so a scan that starts and ends inside one pixel is still visible/clickable.
+    const width = Math.max(((to - from) / span) * 100, 0.2);
+    out.push({ scanId, left: `${left.toFixed(4)}%`, width: `${width.toFixed(4)}%` });
+  }
+  return out;
+}
+
+/**
+ * One-line human description of a marker for a hover tooltip or an event-log row (the caller prefixes the
+ * formatted sim time). Carries what the task asks to see: alert action/severity and who acked/resolved it,
+ * command control/researcher/outcome, scan start/end.
+ */
+export function markerLabel(m: ReplayMarker): string {
+  if (m.kind === 'alert') {
+    const sev = m.severity ? ` [${m.severity}]` : '';
+    const who = m.actor ? ` by ${m.actor}` : '';
+    return `${m.service} alert ${m.action ?? ''}${sev}${who}`.trim();
+  }
+  if (m.kind === 'command') {
+    const by = m.researcher ? ` by ${m.researcher}` : '';
+    const out = m.outcome ? ` — ${m.outcome}` : '';
+    return `${m.service} command ${m.control ?? ''}${by}${out}`.trim();
+  }
+  if (m.kind === 'scan_start') return `RTA scan ${m.scanId ?? ''} started`;
+  return `RTA scan ${m.scanId ?? ''} ended`;
+}

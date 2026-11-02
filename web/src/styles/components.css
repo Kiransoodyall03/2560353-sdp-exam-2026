@@ -46,6 +46,8 @@
 .arl-replay__tick--crit{background:var(--alarm-critical);height:16px;width:3px}
 .arl-replay__tick--warn{background:var(--alarm-warning)}
 .arl-replay__tick--cmd{background:var(--chrome-muted);height:6px}
+.arl-replay__tick--info{background:var(--alarm-info);height:5px;width:1px}
+.arl-replay__scanbar{position:absolute;bottom:1px;height:3px;background:var(--chrome-muted);opacity:.55;border-radius:1px}
 .arl-replay__head{position:absolute;top:0;bottom:-4px;width:2px;background:var(--chrome-accent)}
 .arl-replay__btn{background:transparent;border:1px solid var(--chrome-muted);color:var(--chrome-ink);border-radius:var(--radius-1);font:600 12px/16px var(--font-ui);padding:4px 8px}
 .arl-replay__btn--on{border-color:var(--chrome-accent);color:var(--chrome-accent)}

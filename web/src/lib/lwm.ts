@@ -4,6 +4,7 @@
 // as read-only types — the page never recomputes a derived value, it just renders and formats it.
 import { useState } from 'react';
 import { api } from './api';
+import { useServiceState } from './service-state';
 import { useSse, type SseStatus } from './sse';
 
 // ------------------------------------------------------------------- model
@@ -228,14 +229,18 @@ export interface LwmSiteHistory {
 }
 
 // ------------------------------------------------------------------- live
+// While a replay session is active the live channel is closed and the session's folded view ({network}) is
+// used instead, so the sites, derived numbers and lightning all reflect the state at the replay cursor.
 export function useLwmLive(): { network: LwmSnapshot | null; status: SseStatus } {
-  const [network, setNetwork] = useState<LwmSnapshot | null>(null);
-  const status = useSse('lwm', (env) => {
+  const svc = useServiceState('lwm');
+  const [liveNetwork, setNetwork] = useState<LwmSnapshot | null>(null);
+  const status = useSse(svc ? null : 'lwm', (env) => {
     const data = env.data as { network?: LwmSnapshot };
     if (env.type === 'snapshot') setNetwork(data.network ?? null);
     else if (env.type === 'patch' && data.network) setNetwork(data.network);
   });
-  return { network, status };
+  const network = svc ? ((svc.view as { network?: LwmSnapshot } | null)?.network ?? null) : liveNetwork;
+  return { network, status: svc ? 'open' : status };
 }
 
 // ------------------------------------------------------------------ fetch

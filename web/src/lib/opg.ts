@@ -1,6 +1,8 @@
 // OPG live view: one SSE channel carries the whole plant (snapshot on connect, then a `plant` patch
-// each minute). Everything derived on the page comes from the server, never recomputed here.
+// each minute). Everything derived on the page comes from the server, never recomputed here. While a replay
+// session is active the channel is closed and the session's folded view ({plant}) is used instead.
 import { useState } from 'react';
+import { useServiceState } from './service-state';
 import { useSse, type SseStatus } from './sse';
 
 export interface OpgDerived {
@@ -104,13 +106,15 @@ export interface OpgTrend {
 }
 
 export function useOpgLive(): { plant: OpgPlant | null; status: SseStatus } {
-  const [plant, setPlant] = useState<OpgPlant | null>(null);
-  const status = useSse('opg', (env) => {
+  const svc = useServiceState('opg');
+  const [livePlant, setPlant] = useState<OpgPlant | null>(null);
+  const status = useSse(svc ? null : 'opg', (env) => {
     const data = env.data as { plant?: OpgPlant };
     if (env.type === 'snapshot') setPlant(data.plant ?? null);
     else if (env.type === 'patch' && data.plant) setPlant(data.plant);
   });
-  return { plant, status };
+  const plant = svc ? ((svc.view as { plant?: OpgPlant } | null)?.plant ?? null) : livePlant;
+  return { plant, status: svc ? 'open' : status };
 }
 
 /** kW with a fixed 0 decimals; the plant runs in the hundreds of kW. */

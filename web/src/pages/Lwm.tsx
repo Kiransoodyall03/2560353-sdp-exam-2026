@@ -19,6 +19,7 @@ import { WindRose } from '../components/lwm/WindRose';
 import { ErrorBox, KpiTile, Loading, Panel, SeverityBadge, StatusPill } from '../components/ui';
 import { errorText } from '../lib/api';
 import { fmtNum, fmtTime } from '../lib/format';
+import { useReplay } from '../lib/replay';
 import {
   fetchLwmGeoJson,
   fetchLwmMap,
@@ -83,6 +84,7 @@ const LWM_STYLES = `
 
 export function LwmPage() {
   const { network, status } = useLwmLive();
+  const { isReplaying, t } = useReplay();
 
   // map: variable + optional scrub time (null = follow the sim clock, so replay advances it)
   const [variable, setVariable] = useState('temperature_k');
@@ -91,6 +93,12 @@ export function LwmPage() {
   const [map, setMap] = useState<LwmMapDTO | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
   const [geojson, setGeojson] = useState<unknown | null>(null);
+
+  // While replaying the interpolated field follows the cursor (the server IDWs it as of that sim time);
+  // back to live the map resumes "now". Depends only on mode + cursor, so a manual live scrub is not fought.
+  useEffect(() => {
+    setMapTs(isReplaying ? t : null);
+  }, [isReplaying, t]);
 
   // wind rose scope + window
   const [roseScope, setRoseScope] = useState('all');
