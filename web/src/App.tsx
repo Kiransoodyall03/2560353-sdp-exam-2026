@@ -1,9 +1,12 @@
 import { Route, Routes } from 'react-router-dom';
 import { AlertBanner } from './components/AlertBanner';
 import { Nav } from './components/Nav';
+import { ReplayTimeline } from './components/ReplayTimeline';
 import { Empty } from './components/ui';
 import { fmtTs } from './lib/format';
 import { useLive } from './lib/live';
+import { useReplay } from './lib/replay';
+import { speedLabel } from './lib/replay-utils';
 import { AlertDetailPage } from './pages/AlertDetail';
 import { AnnunciatorPage } from './pages/Annunciator';
 import { DishDetailPage } from './pages/DishDetail';
@@ -19,8 +22,11 @@ import { ServicePage } from './pages/ServicePage';
 /** Instrument frame: rail, pinned annunciator strip, scrolling page, pinned replay bar. */
 export function App() {
   const { simNow } = useLive();
+  const { isReplaying, mode, t, speed, busy, error, toggle } = useReplay();
+  // The mission clock follows the replay cursor while replaying and the live sim stream otherwise.
+  const clockTs = isReplaying ? t : simNow;
   return (
-    <div className="app">
+    <div className={`app${isReplaying ? ' arl-replaying' : ''}`}>
       <Nav />
       <main className="main">
         <AlertBanner />
@@ -43,21 +49,45 @@ export function App() {
         </div>
         <footer className="arl-replay" aria-label="Replay and live controls">
           <div className="arl-replay__clock">
-            Mission time <strong>{fmtTs(simNow)}</strong>
+            {isReplaying && <span className="arl-replay-banner">Replay {speedLabel(speed)}</span>}
+            <span>
+              Mission time <strong>{fmtTs(clockTs)}</strong>
+            </span>
           </div>
-          <div
-            className="arl-replay__slot"
-            data-replay-slot="timeline"
-            aria-label="Replay timeline (arrives in a later phase)"
-          />
-          <button
-            type="button"
-            className="arl-replay__btn arl-replay__btn--on"
-            aria-pressed="true"
-            title="Following the live stream. The replay timeline arrives in a later phase."
-          >
-            Live
-          </button>
+          <div className="arl-replay__slot" data-replay-slot="timeline">
+            <ReplayTimeline />
+            {error && (
+              <div className="arl-replay__error" role="alert">
+                {error}
+              </div>
+            )}
+          </div>
+          <div className="arl-replay__mode" role="group" aria-label="Live or replay">
+            <button
+              type="button"
+              className={`arl-replay__btn${mode === 'live' ? ' arl-replay__btn--on' : ''}`}
+              aria-pressed={mode === 'live'}
+              disabled={busy}
+              title="Follow the live stream"
+              onClick={() => {
+                if (mode !== 'live') void toggle();
+              }}
+            >
+              Live
+            </button>
+            <button
+              type="button"
+              className={`arl-replay__btn${mode === 'replay' ? ' arl-replay__btn--on' : ''}`}
+              aria-pressed={mode === 'replay'}
+              disabled={busy}
+              title="Replay history from the playhead"
+              onClick={() => {
+                if (mode !== 'replay') void toggle();
+              }}
+            >
+              Replay
+            </button>
+          </div>
         </footer>
       </main>
     </div>

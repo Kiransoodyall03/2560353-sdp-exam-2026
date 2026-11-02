@@ -382,7 +382,7 @@ input[type="range"] {
   flex: none;
 }
 
-/* bottom bar: mission clock, the (later) replay timeline slot, live control */
+/* bottom bar: mission clock, the replay timeline slot, the live/replay toggle */
 .arl-replay {
   flex: none;
   z-index: 10;
@@ -390,16 +390,57 @@ input[type="range"] {
 .arl-replay__slot {
   position: relative;
   min-width: 0;
-  min-height: 28px;
-  border-bottom: 1px solid var(--chrome-muted);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
 }
 .arl-replay__clock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   color: var(--chrome-muted);
   white-space: nowrap;
 }
 .arl-replay__clock strong {
   color: var(--chrome-ink);
   font-weight: 600;
+}
+.arl-replay__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.arl-replay__group,
+.arl-replay__mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.arl-replay__icon {
+  padding: 4px 6px;
+  justify-content: center;
+}
+/* the bar is dark chrome in both themes, so hover and the time field cannot use the page ink/surface */
+.arl-replay__btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--chrome-ink) 12%, transparent);
+  text-decoration: none;
+}
+.arl-replay__time {
+  background: var(--chrome);
+  color: var(--chrome-ink);
+  border: 1px solid var(--chrome-muted);
+  border-radius: var(--radius-1);
+  font: 500 12px/16px var(--font-data);
+  font-variant-numeric: tabular-nums;
+  padding: 3px 6px;
+  color-scheme: dark;
+}
+.arl-replay__error {
+  color: var(--alarm-warning);
+  font: 500 11px/14px var(--font-ui);
 }
 
 /* ---------- severity, tone, flags ---------- */

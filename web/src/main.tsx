@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
 import { LiveProvider } from './lib/live';
+import { ReplayProvider } from './lib/replay';
 import { ResearcherProvider } from './lib/researcher';
 import { ThemeProvider } from './lib/theme';
 import { CommandsProvider } from './state/CommandsContext';
@@ -17,7 +18,9 @@ createRoot(document.getElementById('root')!).render(
         <ResearcherProvider>
           <CommandsProvider>
             <LiveProvider>
-              <App />
+              <ReplayProvider>
+                <App />
+              </ReplayProvider>
             </LiveProvider>
           </CommandsProvider>
         </ResearcherProvider>

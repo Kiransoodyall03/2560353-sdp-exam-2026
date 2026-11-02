@@ -1,5 +1,17 @@
 // Thin fetch wrapper for the platform API (same origin; Vite proxies /api in dev).
 export const RESEARCHER_HEADER = 'x-researcher-code';
+/** Sent on every request while a replay session is active; the server refuses control routes that carry it. */
+export const REPLAY_HEADER = 'x-replay-session';
+
+// Module-level so any fetch (including ones fired outside React) carries the active replay session. The
+// ReplayProvider keeps this in sync: set on enterReplay, cleared on exitReplay and on page unload.
+let replaySessionId: string | null = null;
+export function setReplayHeader(id: string | null): void {
+  replaySessionId = id;
+}
+export function getReplayHeader(): string | null {
+  return replaySessionId;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -19,10 +31,11 @@ interface Opts {
   signal?: AbortSignal;
 }
 
-async function request<T>(method: 'GET' | 'POST', path: string, body: unknown, opts: Opts = {}): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body: unknown, opts: Opts = {}): Promise<T> {
   const headers: Record<string, string> = { accept: 'application/json' };
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (opts.researcher) headers[RESEARCHER_HEADER] = opts.researcher;
+  if (replaySessionId) headers[REPLAY_HEADER] = replaySessionId;
   let res: Response;
   try {
     res = await fetch(path, {
@@ -53,6 +66,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body: unknown, o
 export const api = {
   get: <T>(path: string, opts?: Opts) => request<T>('GET', path, undefined, opts),
   post: <T>(path: string, body: unknown, opts?: Opts) => request<T>('POST', path, body, opts),
+  del: <T>(path: string, opts?: Opts) => request<T>('DELETE', path, undefined, opts),
 };
 
 export function errorText(err: unknown): string {
