@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type { DishDTO, SubarrayDTO } from '../../../shared/types';
 import { alignSeries, Chart, holdForward } from '../components/Chart';
+import { CommandHistory } from '../components/CommandHistory';
+import { ControlPanel } from '../components/ControlPanel';
 import { DishGrid, DishLegend } from '../components/DishGrid';
 import { ErrorBox, KpiTile, Loading, Panel, StatusPill, type Tone } from '../components/ui';
 import { api, errorText } from '../lib/api';
@@ -104,6 +106,13 @@ export function RtaPage() {
       <Trends />
 
       <Panel
+        title="Command history"
+        actions={<span className="muted small">every command is verified server-side before it is published</span>}
+      >
+        <CommandHistory service="rta" limit={15} />
+      </Panel>
+
+      <Panel
         title="Recent scans"
         actions={
           <Link to="/rta/scans" className="button">
@@ -121,15 +130,16 @@ function Selection({ ids, byId, onClear }: { ids: string[]; byId: Map<string, Di
   const dishes = ids.map((id) => byId.get(id)).filter((d): d is DishDTO => !!d);
   const counts = new Map<string, number>();
   for (const d of dishes) counts.set(d.status, (counts.get(d.status) ?? 0) + 1);
+  const sorted = [...ids].sort();
   return (
     <div className="selection">
       <strong>{dishes.length} selected</strong>{' '}
       <span className="muted small">{[...counts].map(([s, n]) => `${n} ${s}`).join(' · ')}</span>
-      <div className="mono small">{ids.sort().join(', ')}</div>
+      <div className="mono small">{sorted.join(', ')}</div>
       <div className="row gap">
         <button onClick={onClear}>Clear selection</button>
-        <span className="muted small">Batch dish commands arrive with the controls phase.</span>
       </div>
+      <ControlPanel service="rta" entities={sorted} kinds={['dish']} title="Batch dish commands" collapsible defaultOpen />
     </div>
   );
 }
@@ -193,6 +203,7 @@ function SubarrayCard({
           {s.scanState === 'running' || s.scanState === 'paused' ? 'Open live scan image' : 'Open last scan'} ({s.scanId}) →
         </Link>
       )}
+      <ControlPanel service="rta" entities={[s.id]} kinds={['subarray']} showPresets={s.id === 'main'} collapsible />
     </section>
   );
 }

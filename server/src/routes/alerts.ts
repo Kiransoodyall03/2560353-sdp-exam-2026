@@ -1,6 +1,6 @@
 // Alert workflow endpoints. Every ack/resolve is verified server-side (POST /v1/researchers/verify for the
 // alert's service; platform alerts: any active researcher) BEFORE anything is recorded.
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AlertService, CommandDTO, VerifyResponse } from '../../../shared/types.js';
 import { NOTE_MAX } from '../alerts/workflow.js';
@@ -8,9 +8,8 @@ import { publicAlert, publicEvent } from '../alerts/public.js';
 import { suggestedAction } from '../alerts/suggestions.js';
 import type { Platform } from '../core/platform.js';
 import { maskCode } from '../log.js';
-import { FailureLimiter, VERIFY_MESSAGES, type VerifiedResearcher } from '../researchers/verify.js';
-
-export const RESEARCHER_HEADER = 'x-researcher-code';
+import type { VerifiedResearcher } from '../researchers/verify.js';
+import { RESEARCHER_HEADER, type ResearcherGuard } from './researcher.js';
 const ALERT_SERVICES = ['rta', 'lwm', 'opg', 'platform'] as const;
 
 const KeyParams = z.object({
@@ -36,41 +35,8 @@ const ListQuery = z.object({
 });
 const VerifyBody = z.object({ service: z.enum(ALERT_SERVICES) }).strict();
 
-export function alertRoutes(app: FastifyInstance, platform: Platform): void {
-  const limiter = new FailureLimiter(10, 60_000);
-
-  /** Verifies the header code for a service; sends the error reply and returns null on failure. */
-  async function requireResearcher(
-    req: FastifyRequest,
-    reply: FastifyReply,
-    service: AlertService,
-  ): Promise<VerifiedResearcher | null> {
-    const blocked = limiter.blocked(req.ip);
-    if (blocked) {
-      void reply
-        .code(429)
-        .header('retry-after', String(blocked))
-        .send({ error: 'rate_limited', detail: 'Too many failed researcher verifications. Wait and try again.' });
-      return null;
-    }
-    const raw = req.headers[RESEARCHER_HEADER];
-    const code = typeof raw === 'string' ? raw.trim() : '';
-    if (!code) {
-      void reply.code(401).send({ error: 'researcher_required', detail: 'A researcher code is required.' });
-      return null;
-    }
-    const v = await platform.verifier.verify(code, service);
-    if (v.ok) return v.researcher;
-    if (v.reason === 'api_unavailable' || v.reason === 'rate_limited') {
-      const r = reply.code(503);
-      if (v.retryAfterS) r.header('retry-after', String(v.retryAfterS));
-      void r.send({ error: v.reason, detail: VERIFY_MESSAGES[v.reason] });
-      return null;
-    }
-    limiter.fail(req.ip);
-    void reply.code(403).send({ error: `researcher_${v.reason}`, detail: VERIFY_MESSAGES[v.reason] });
-    return null;
-  }
+export function alertRoutes(app: FastifyInstance, platform: Platform, guard: ResearcherGuard): void {
+  const requireResearcher = guard.require;
 
   const simNow = () => platform.clock.globalNow();
 
@@ -113,7 +79,7 @@ export function alertRoutes(app: FastifyInstance, platform: Platform): void {
     const { service, alertId } = KeyParams.parse(req.params);
     const body = AckBody.parse(req.body ?? {});
     if (!platform.alertStore.get(service, alertId)) return reply.code(404).send({ error: 'not_found', detail: 'alert' });
-    const researcher = await requireResearcher(req, reply, service);
+    const researcher = await requireResearcher(req, reply, service, 'operate');
     if (!researcher) return reply;
     const r = platform.alerts.acknowledge(service, alertId, researcher, body.note ?? null, simNow());
     if (!r.ok) return reply.code(409).send({ error: r.code, detail: r.message });
@@ -128,7 +94,7 @@ export function alertRoutes(app: FastifyInstance, platform: Platform): void {
     if (existing.opState !== 'acked') {
       return reply.code(409).send({ error: 'not_acked', detail: 'Acknowledge the alert before resolving it.' });
     }
-    const researcher = await requireResearcher(req, reply, service);
+    const researcher = await requireResearcher(req, reply, service, 'operate');
     if (!researcher) return reply;
     const r = platform.alerts.resolve(service, alertId, researcher, body.note, simNow());
     if (!r.ok) return reply.code(409).send({ error: r.code, detail: r.message });
@@ -152,7 +118,7 @@ export function alertRoutes(app: FastifyInstance, platform: Platform): void {
     // verify once per service before touching anything
     const researchers = new Map<string, VerifiedResearcher>();
     for (const s of services) {
-      const r = await requireResearcher(req, reply, s as AlertService);
+      const r = await requireResearcher(req, reply, s as AlertService, 'operate');
       if (!r) return reply;
       researchers.set(s, r);
     }
@@ -169,14 +135,14 @@ export function alertRoutes(app: FastifyInstance, platform: Platform): void {
 
   app.post('/api/verify', async (req, reply) => {
     const { service } = VerifyBody.parse(req.body);
-    const blocked = limiter.blocked(req.ip);
+    const blocked = guard.blocked(req);
     if (blocked) {
       return reply.code(429).header('retry-after', String(blocked)).send({ error: 'rate_limited', detail: 'Too many failed attempts.' });
     }
     const raw = req.headers[RESEARCHER_HEADER];
     const code = typeof raw === 'string' ? raw.trim() : '';
     const v = await platform.verifier.verify(code, service);
-    if (!v.ok && v.reason !== 'api_unavailable' && v.reason !== 'rate_limited') limiter.fail(req.ip);
+    if (!v.ok && v.reason !== 'api_unavailable' && v.reason !== 'rate_limited') guard.fail(req);
     const body: VerifyResponse = v.ok
       ? { valid: true, reason: null, name: v.researcher.name, service }
       : { valid: false, reason: v.reason, name: null, service, ...(v.retryAfterS ? { retryAfterS: v.retryAfterS } : {}) };

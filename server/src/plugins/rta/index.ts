@@ -7,7 +7,9 @@ import type { DishDTO, ServiceTopology } from '../../../../shared/types.js';
 import type { AlertLimit, Target } from '../../arl-api/client.js';
 import type { Parsed } from '../../core/parse.js';
 import type { Db } from '../../db/index.js';
+import type { CommandSpec, PresetSpec } from '../../commands/types.js';
 import type { Plugin, PlatformContext, StreamExpectation } from '../types.js';
+import { rtaCommandSpecs, rtaPresets, type RtaControlView } from './controls.js';
 import {
   dishAlertIndex,
   dishDTO,
@@ -45,7 +47,6 @@ const HoursQuery = z.object({ hours: z.coerce.number().min(0.05).max(24 * 14).de
 
 export class RtaPlugin implements Plugin {
   readonly id = 'rta' as const;
-  readonly commands = [];
   state: RtaState = emptyRtaState();
   private ctx!: PlatformContext;
   private pending: RtaDelta = newDelta();
@@ -54,6 +55,26 @@ export class RtaPlugin implements Plugin {
   private dishCache = new Map<string, DishDTO>();
   private timer: NodeJS.Timeout | null = null;
   private lastFull = 0;
+  private specs: CommandSpec[] | null = null;
+
+  // ------------------------------------------------------------ controls
+  /** What the safeguards see: live state plus the catalogue, limits and site geometry. */
+  private readonly controlView: RtaControlView = {
+    state: this.state,
+    simNow: () => this.simNow(),
+    resolveTarget: (id) => this.resolve(id),
+    hasTarget: (id) => this.catalogue().some((t) => t.id === id),
+    site: () => this.site(),
+    minActive: () => this.limits().minActive,
+  };
+
+  get commands(): CommandSpec[] {
+    return (this.specs ??= rtaCommandSpecs(this.controlView));
+  }
+
+  get presets(): PresetSpec[] {
+    return rtaPresets();
+  }
 
   parse(topic: string, payload: Buffer, recvTs: number, retained: boolean): Parsed[] {
     return parseRta(topic, payload, recvTs, retained);
@@ -77,6 +98,20 @@ export class RtaPlugin implements Plugin {
   }
   private catalogue(): Target[] {
     return this.ctx?.api.peek<Target[]>('targets') ?? [];
+  }
+  /** Mean dish position from $topology; the target-elevation safeguard uses it. */
+  site(): { lat: number; lon: number } | null {
+    let lat = 0;
+    let lon = 0;
+    let n = 0;
+    for (const d of Object.values(this.state.dishes)) {
+      if (typeof d.lat === 'number' && typeof d.lon === 'number') {
+        lat += d.lat;
+        lon += d.lon;
+        n++;
+      }
+    }
+    return n > 0 ? { lat: lat / n, lon: lon / n } : null;
   }
   private targetName = (id: string) => this.catalogue().find((t) => t.id === id)?.name ?? null;
   private catalogueId = (t: RtaState['subarrays'][string]['target']) => targetIdOf(t, this.catalogue());
@@ -185,7 +220,8 @@ export class RtaPlugin implements Plugin {
   }
 
   restore(snapshot: unknown): void {
-    this.state = structuredClone(snapshot as RtaState);
+    // mutate in place: the control safeguards hold a reference to `state`
+    Object.assign(this.state, structuredClone(snapshot as RtaState));
   }
 
   // ------------------------------------------------------------ views

@@ -8,7 +8,11 @@ import type { Config } from './config.js';
 import type { Platform } from './core/platform.js';
 import { REDACT_PATHS } from './log.js';
 import { alertRoutes } from './routes/alerts.js';
+import { commandRoutes } from './routes/commands.js';
 import { coreRoutes } from './routes/core.js';
+import { presetRoutes } from './routes/presets.js';
+import { researcherGuard } from './routes/researcher.js';
+import { scheduleRoutes } from './routes/schedules.js';
 
 const WEB_DIST = fileURLToPath(new URL('../../web/dist/', import.meta.url));
 
@@ -46,8 +50,13 @@ export async function createServer(
 }
 
 export async function registerRoutes(app: FastifyInstance, platform: Platform): Promise<void> {
+  // one guard (and one failure limiter) for every route that needs a researcher code
+  const guard = researcherGuard(platform);
   coreRoutes(app, platform);
-  alertRoutes(app, platform);
+  alertRoutes(app, platform, guard);
+  commandRoutes(app, platform, guard);
+  presetRoutes(app, platform, guard);
+  scheduleRoutes(app, platform, guard);
   for (const p of platform.plugins.values()) p.routes?.(app);
 
   if (existsSync(WEB_DIST)) {

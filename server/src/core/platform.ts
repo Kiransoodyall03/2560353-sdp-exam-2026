@@ -13,6 +13,7 @@ import { PlaceholderEnricher } from '../alerts/backlog.js';
 import { publicAlert } from '../alerts/public.js';
 import { AlertStore } from '../alerts/store.js';
 import { AlertWorkflow, parseAlertPayload } from '../alerts/workflow.js';
+import { CommandService } from '../commands/service.js';
 import { Aggregator } from '../db/aggregates.js';
 import type { Db } from '../db/index.js';
 import { BatchWriter, genericPersister, type Persister, type WriterOptions } from '../db/writer.js';
@@ -54,6 +55,8 @@ export class Platform {
   readonly alerts: AlertWorkflow;
   readonly enricher: PlaceholderEnricher;
   readonly verifier: ResearcherVerifier;
+  /** One generic pipeline for every service's controls (zod → guards → insert → publish → acks). */
+  readonly commands: CommandService;
   readonly plugins = new Map<string, Plugin>();
   readonly ctx: PlatformContext;
   private readonly wallNow: () => number;
@@ -131,6 +134,8 @@ export class Platform {
       },
     };
     for (const p of this.plugins.values()) p.init?.(this.ctx);
+    this.commands = new CommandService(this.ctx);
+    for (const p of this.plugins.values()) this.commands.register(p.id, p.commands, p.presets ?? []);
     this.registerChannels();
   }
 
@@ -208,6 +213,13 @@ export class Platform {
     }
     if (p.kind === 'telemetry' || p.kind === 'event') this.seq.observe(svc, p.topic, p.seq, p.kind === 'telemetry' && p.backfill);
 
+    if (p.kind === 'ack') {
+      try {
+        this.commands.onAck(p);
+      } catch (err) {
+        this.log.warn({ err, topic: p.topic }, 'ack ingest failed');
+      }
+    }
     const change = this.state.apply(p);
 
     if (p.kind === 'telemetry') {

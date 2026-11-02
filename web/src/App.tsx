@@ -5,6 +5,7 @@ import { Empty } from './components/ui';
 import { AlertDetailPage } from './pages/AlertDetail';
 import { AnnunciatorPage } from './pages/Annunciator';
 import { DishDetailPage } from './pages/DishDetail';
+import { OpgPage } from './pages/Opg';
 import { OverviewPage } from './pages/Overview';
 import { ReplayPage } from './pages/Replay';
 import { RtaPage } from './pages/Rta';
@@ -27,6 +28,7 @@ export function App() {
           <Route path="/rta/scans" element={<ScansPage />} />
           <Route path="/rta/scans/:id" element={<ScanViewPage />} />
           <Route path="/rta/compare" element={<ComparePage />} />
+          <Route path="/opg" element={<OpgPage />} />
           <Route path="/replay" element={<ReplayPage />} />
           <Route path="/:svc" element={<ServicePage />} />
           <Route path="*" element={<Empty>Page not found.</Empty>} />

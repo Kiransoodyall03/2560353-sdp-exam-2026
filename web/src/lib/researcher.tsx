@@ -20,6 +20,12 @@ const SERVICE_LABEL: Record<AlertService, string> = {
   platform: 'platform alerts',
 };
 
+/** Codes that depend on the service name the service: "this experiment" leaves the operator guessing. */
+function reasonText(reason: VerifyFailReason, service: AlertService): string {
+  if (reason === 'not_permitted') return `This researcher is not permitted on the ${SERVICE_LABEL[service]}.`;
+  return VERIFY_TEXT[reason];
+}
+
 interface Prompt {
   service: AlertService;
   purpose: string;
@@ -79,7 +85,7 @@ export function ResearcherProvider({ children }: { children: ReactNode }) {
             accept(current, v.name, service);
             return current;
           }
-          error = v.reason ? VERIFY_TEXT[v.reason] : 'Verification failed.';
+          error = v.reason ? reasonText(v.reason, service) : 'Verification failed.';
         } catch (err) {
           error = errorText(err);
         }
@@ -152,7 +158,7 @@ function CodePrompt({
     try {
       const v = await verify(c, prompt.service);
       if (v.valid) onDone(c, v.name);
-      else setError(v.reason ? VERIFY_TEXT[v.reason] : 'Verification failed.');
+      else setError(v.reason ? reasonText(v.reason, prompt.service) : 'Verification failed.');
     } catch (err) {
       setError(errorText(err));
     } finally {

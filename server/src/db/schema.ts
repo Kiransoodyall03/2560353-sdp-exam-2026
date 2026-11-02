@@ -191,4 +191,24 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (scan_id, mode)
   );
   `,
+
+  /* 2 — OPG plant history */ `
+  CREATE TABLE opg_power (
+    sim_ts INTEGER PRIMARY KEY,
+    solar_w REAL,
+    battery_w REAL,
+    diesel_w REAL,
+    load_w REAL,
+    generation_w REAL,
+    soc_pct REAL,
+    fuel_pct REAL,
+    irradiance_wm2 REAL
+  );
+
+  CREATE TABLE opg_refuels (
+    sim_ts INTEGER PRIMARY KEY,
+    litres REAL,
+    fuel_level_pct REAL
+  );
+  `,
 ];

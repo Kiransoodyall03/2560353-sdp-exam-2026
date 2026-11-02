@@ -3,10 +3,12 @@ import 'dotenv/config';
 import { createServer, registerRoutes } from './app.js';
 import { ArlApiClient } from './arl-api/client.js';
 import { loadConfig } from './config.js';
+import { ScheduleRunner } from './commands/schedules.js';
 import { Platform } from './core/platform.js';
 import { openDb } from './db/index.js';
 import { connectBroker } from './mqtt/client.js';
 import { createGenericPlugin } from './plugins/generic.js';
+import { createOpgPlugin } from './plugins/opg/index.js';
 import { createRtaPlugin } from './plugins/rta/index.js';
 
 async function main() {
@@ -17,7 +19,7 @@ async function main() {
     db,
     api: new ArlApiClient(cfg.api.baseUrl),
     log: app.log,
-    plugins: [createRtaPlugin(), createGenericPlugin('lwm'), createGenericPlugin('opg')],
+    plugins: [createRtaPlugin(), createGenericPlugin('lwm'), createOpgPlugin()],
   });
   await registerRoutes(app, platform);
 
@@ -31,11 +33,32 @@ async function main() {
     app.log,
   );
 
+  // controls leave the platform only through this publisher, and only while the broker is up
+  platform.commands.setPublisher((topic, payload) => {
+    if (!platform.broker.connected) return false;
+    mqtt.publish(topic, payload, { qos: 1 });
+    return true;
+  });
+
+  const schedules = new ScheduleRunner({
+    db,
+    clock: platform.clock,
+    log: app.log,
+    commands: platform.commands,
+    verify: async (code, service) => {
+      const v = await platform.verifier.verify(code, service);
+      return v.ok ? v.researcher : null;
+    },
+  });
+  schedules.start();
+
   await app.listen({ host: cfg.server.host, port: cfg.server.port });
   app.log.info({ broker: `${cfg.mqtt.host}:${cfg.mqtt.port}`, db: cfg.dbPath }, 'ARL platform started');
 
   const shutdown = async (sig: string) => {
     app.log.info({ sig }, 'shutting down');
+    schedules.stop();
+    platform.commands.dispose();
     mqtt.end(true);
     platform.stop();
     await app.close();

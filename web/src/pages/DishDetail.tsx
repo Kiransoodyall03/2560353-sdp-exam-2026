@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { DishDTO } from '../../../shared/types';
 import { alignSeries, Chart } from '../components/Chart';
+import { CommandHistory } from '../components/CommandHistory';
+import { ControlPanel } from '../components/ControlPanel';
 import { alertHref } from '../components/EntityLink';
 import { Empty, ErrorBox, Loading, Panel, SeverityBadge, StatusPill, type Tone } from '../components/ui';
 import { api, errorText } from '../lib/api';
@@ -188,6 +190,14 @@ export function DishDetailPage() {
                 ))}
             </ol>
           )}
+        </Panel>
+      </div>
+      <div className="grid-2">
+        <Panel title="Controls">
+          <ControlPanel service="rta" entities={[d.id]} kinds={['dish']} />
+        </Panel>
+        <Panel title="Command history">
+          <CommandHistory service="rta" entity={d.id} limit={8} />
         </Panel>
       </div>
       <Panel

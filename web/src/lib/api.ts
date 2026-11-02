@@ -7,6 +7,8 @@ export class ApiError extends Error {
     readonly code: string,
     readonly detail: string,
     readonly retryAfterS: number | null = null,
+    /** Parsed response body, for the 428 confirm_required facts and token. */
+    readonly body: unknown = null,
   ) {
     super(detail || code);
   }
@@ -43,7 +45,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body: unknown, o
   if (!res.ok) {
     const j = (json ?? {}) as { error?: string; detail?: string; message?: string };
     const ra = Number(res.headers.get('retry-after'));
-    throw new ApiError(res.status, j.error ?? `http_${res.status}`, j.detail ?? j.message ?? res.statusText, ra > 0 ? ra : null);
+    throw new ApiError(res.status, j.error ?? `http_${res.status}`, j.detail ?? j.message ?? res.statusText, ra > 0 ? ra : null, json);
   }
   return json as T;
 }

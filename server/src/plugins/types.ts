@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import type { KpiDTO, ServiceId, ServiceTopology, TopologyEntity } from '../../../shared/types.js';
 import type { ArlApiClient } from '../arl-api/client.js';
 import type { AlertStore } from '../alerts/store.js';
+import type { CommandSpec, PresetSpec } from '../commands/types.js';
 import type { SimClock } from '../core/clock.js';
 import type { Parsed } from '../core/parse.js';
 import type { SseHub } from '../core/sse.js';
@@ -35,11 +36,7 @@ export interface StreamExpectation {
 
 export type Kpi = KpiDTO;
 
-/** Placeholder for P4 (controls): zod schema, safeguards, presets. */
-export interface CommandSpec {
-  control: string;
-  entityKinds: string[];
-}
+export type { CommandSpec } from '../commands/types.js';
 
 export interface Plugin {
   readonly id: ServiceId;
@@ -56,5 +53,8 @@ export interface Plugin {
   snapshot?(): unknown;
   restore?(snapshot: unknown): void;
   routes?(app: FastifyInstance): void;
+  /** Controls this service accepts (zod schema, safeguards, UI hints). */
   readonly commands: CommandSpec[];
+  /** One-click step sequences registered with the command service. */
+  readonly presets?: PresetSpec[];
 }
