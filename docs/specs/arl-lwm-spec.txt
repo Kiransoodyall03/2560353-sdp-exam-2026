@@ -1,0 +1,456 @@
+
+
+                       ARL Spec: Local Weather Monitoring
+                                                                                         Brendan Griffiths
+
+Contents
+
+1 Service overview
+The Local Weather Monitoring (LWM) service is a network of five small weather stations (“sites”)
+spread around the ARL. Topic prefix: arl/lwm.
+
+ Entity kind           Ids                       Notes
+                                                 Weather stations. Each publishes its position (lat, lon) in
+ site                  lwm-1 to lwm-5            $topology and as retained state. The sites span about 6 km east to
+                                                 west and 4 km north to south, 3 to 4 km apart.
+                                                 The service as a whole: the lightning summary, the number of
+ service               global
+                                                 active sites, alert summary.
+
+1.1 General state and routines
+• Sampling: every site samples every 60 s by default. The interval can be set per site from 10 s to 3600 s
+  (multiples of 10 s). Mean wind, maximum gust, rainfall and strike counts aggregate the period since
+  the site’s previous sample.
+• Site-specific instruments: lwm-3 carries a sonic anemometer, lwm-4 a soiling station (clean and
+  exposed reference solar cells), lwm-5 an evaporation pan. Each publishes an extra stream at the site’s
+  sample interval.
+• Power: each site runs on a 12 V battery charged by a small solar panel. Shorter sample intervals use
+  more power, so a site left on a short interval overnight can run its battery flat. A site whose battery is
+  exhausted goes offline until it has recharged.
+• Store and forward: a site that loses its link buffers up to 720 samples (12 h at 60 s). When the link
+  returns it re-publishes the buffered samples, oldest first, with their original ts and seq and backfill:
+  true, interleaved with new live samples (backfill: false). Alerts are judged on live samples only.
+• Calibration rota: a technician recalibrates each site every 21 to 35 days (last_calibration updates).
+  Recalibration can also be requested.
+• Pan refill rota: every day at 08:00 local a technician tops the lwm-5 pan up to 205 mm if it is below
+  190 mm (last_refill updates).
+• Lightning: each site detects strikes within 30 km. Strikes seen by at least one enabled, online site are
+  published as events and summarised once a minute.
+• Technician visits (service_anemometer, clean_reference_cell, refill_pan) cannot start while
+  lightning is close (Lightning Proximity active) and are abandoned if it becomes active during the visit.
+  A site runs at most one long-running command at a time.
+• Load: about 0.15 messages/s at the default interval (5 weather, 3 site-specific, 1 lightning summary a
+  minute), plus lightning events during storms; about 0.8 messages/s with every site at 10 s.
+
+1.2 Message conventions
+Every service follows the same MQTT layout. <entity> is an entity id (or global for the whole service).
+
+ Topic                                  Retained          Content
+                                                          Machine-readable list of the entities, streams (with field names,
+ arl/lwm/$topology                    yes               types, units and periods), state items, events and controls of the
+                                                          service. Re-published when it changes.
+ arl/lwm/<entity>/telemetry/
+ <stream>
+                                        no                Periodic measurements.
+
+                                                          The current value of a state item, re-published when it
+ arl/lwm/<entity>/state/<item>      yes
+                                                          changes.
+ arl/lwm/events/<kind>               no                One-off events, including alert.
+ arl/lwm/cmd/<entity>/<control>     no                Commands sent by the platform.
+ arl/lwm/ack/<command_id>           no                Acknowledgements of a command.
+
+Telemetry and event payloads carry an envelope: v (schema version, integer, currently 1), ts (simulated
+time, Unix milliseconds), seq (per-topic sequence number, restarts with the service; gaps reveal lost
+messages) and entity (entity id). The measurement fields are added next to the envelope. A
+measurement that cannot be taken is null. State payloads are {"v", "ts", "entity", "item",
+"value"}.
+
+Commands are JSON {"command_id": <string>, "researcher": <researcher code>, "value":
+<value>}. The researcher must be verified by the ARL API for the service. Acknowledgements carry
+command_id, target, control, researcher, state (accepted, rejected, in_progress, completed,
+failed), progress (0 to 1 for long-running controls), reason and detail. Rejection and failure reasons:
+controls_disabled, malformed, unknown_control, unknown_target, unknown_researcher, researcher_
+defunct, researcher_not_permitted, api_unavailable, invalid_value, precondition_failed, busy
+(the target is already running a long command), fault, timeout, interrupted.
+Alerts are events on arl/lwm/events/alert with alert_id, type (the alert key below), severity (info,
+warning, critical), state (raised or cleared), value, limit, unit, message and metadata. An alert
+that escalates is raised again with the higher severity under the same alert_id. Limits come from the
+ARL API (/v1/alert-limits/ + lwm).
+Every service also publishes these:
+
+ Measurement           Key               Level         Type / unit       Description
+                                                                         Retained state. true while the service runs,
+ Online                online            Global        boolean           false when it stops or loses its broker
+                                                                         connection (last will).
+                                                       array of alert    Retained state. The ids of the alerts currently
+ Active alerts         active_alerts    Global
+                                                       ids               raised, in the order they were raised.
+
+2 Transmitted data
+
+2.1 Telemetry
+
+2.1.1 Weather (arl/lwm/<site>/telemetry/weather, every sample interval, default 60 s)
+ Measurement         Key                   Level            Type / unit      Description
+ Temperature         temperature_k        Site             float, kelvin    Air temperature at the site.
+                                                            float, %
+ Humidity            humidity_pct         Site                              Relative humidity at the site, 0 to 100.
+                                                            relative
+                                                                             Atmospheric pressure at the site (station level,
+ Pressure            pressure_hpa         Site             float, hPa
+                                                                             about 870 hPa).
+ Wind speed          wind_speed_ms       Site             float, m/s       Mean wind speed over the sample interval.
+ Wind gust           wind_gust_ms        Site             float, m/s       Highest 3 s gust over the sample interval.
+                     wind_direction_                                       Mean direction the wind comes from, clockwise
+ Wind direction      rad
+                                           Site             float, radians
+                                                                             from true north.
+                                                                             Rain since the previous sample (tipping bucket,
+ Rainfall            rainfall_mm          Site             float, mm
+                                                                             multiples of 0.2 mm).
+ Solar irradiance    irradiance_wm2       Site             integer, W/m²    Solar radiation on the site’s sensor.
+                                                                             Strikes within 30 km of the site since the
+ Lightning strikes   lightning_strikes    Site             integer, count
+                                                                             previous sample.
+ Battery voltage     battery_v            Site             float, volts     Voltage of the site’s battery.
+                                                                             The site is in service. During a recalibration the
+ Status              status                Site             boolean          site keeps publishing with every measurement
+                                                                             null.
+
+                                                                             true for a buffered sample re-published after a
+ Backfill            backfill              Site             boolean
+                                                                             link outage, false for a live sample.
+                                                            timestamp,
+ Heartbeat           ts (envelope)         Site                              Time of the latest live message from the site.
+                                                            ms
+
+2.1.2 Sonic anemometer (arl/lwm/lwm-3/telemetry/sonic, every sample interval)
+ Measurement         Key                   Level            Type / unit      Description
+                                                                             Mean air motion towards the east over the
+ Eastward wind       wind_u_ms           Site lwm-3       float, m/s
+                                                                             interval.
+                                                                             Mean air motion towards the north over the
+ Northward wind      wind_v_ms           Site lwm-3       float, m/s
+                                                                             interval.
+ Vertical wind       wind_w_ms           Site lwm-3       float, m/s       Mean vertical air motion (positive upwards).
+ Turbulence          turbulence_                                            Standard deviation of wind speed over its mean.
+                     intensity
+                                           Site lwm-3       float, ratio
+ intensity                                                                   null in near calm (mean below 0.5 m/s).
+
+ Gust factor         gust_factor          Site lwm-3       float, ratio     3 s gust over the mean wind. null in near calm.
+                                                                             Standard deviation of the wind direction over
+ Direction spread    direction_std_rad   Site lwm-3       float, radians
+                                                                             the interval.
+                                                                             Air temperature measured from the speed of
+ Sonic               sonic_
+                     temperature_k
+                                           Site lwm-3       float, kelvin    sound. Independent of the site’s main
+ temperature
+                                                                             thermometer.
+
+ Measurement        Key                   Level            Type / unit      Description
+ Backfill           backfill              Site lwm-3       boolean          As for the weather stream.
+
+2.1.3 Soiling station (arl/lwm/lwm-4/telemetry/soiling, every sample interval)
+ Measurement        Key                   Level            Type / unit      Description
+ Reference          reference_
+                    irradiance_wm2
+                                          Site lwm-4       integer, W/m²    Irradiance on a reference cell that is kept clean.
+ irradiance
+ Exposed            exposed_                                               Irradiance on a cell left exposed to dust, like the
+                    irradiance_wm2
+                                          Site lwm-4       integer, W/m²
+ irradiance                                                                 solar panels.
+                                                                            Exposed over reference irradiance: the fraction
+                                                                            of light that still reaches a dusty panel. Falls on
+                                                           float, ratio 0
+ Soiling ratio      soiling_ratio        Site lwm-4                        dry days and in dust, rises when rain washes the
+                                                           to 1
+                                                                            cell. null when the reference is below 50 W/m²
+                                                                            (night).
+ Backfill           backfill              Site lwm-4       boolean          As for the weather stream.
+
+2.1.4 Evaporation pan (arl/lwm/lwm-5/telemetry/pan, every sample interval)
+ Measurement        Key                   Level            Type / unit      Description
+                                                                            Water depth in the Class A evaporation pan (0
+ Pan level          pan_level_mm        Site lwm-5       float, mm
+                                                                            to 255 mm; it overflows above 255 mm).
+                                                                            Evaporation since the previous sample: the level
+ Evaporation        evaporation_mm       Site lwm-5       float, mm        drop corrected for rain. null for a sample that
+                                                                            contains a refill or an overflow.
+ Backfill           backfill              Site lwm-5       boolean          As for the weather stream.
+
+2.1.5 Lightning summary (arl/lwm/global/telemetry/lightning, every 60 s)
+ Measurement        Key                   Level            Type / unit      Description
+ Nearest strike                                                             Distance from the ARL centre to the nearest
+                    nearest_strike_km   Global           float, km
+ distance                                                                   strike in the last minute. null if there was none.
+ Strikes last
+                    strikes_last_min    Global           integer, count   Strikes detected by any site in the last minute.
+ minute
+
+2.2 State (retained)
+ Measurement        Key                   Level            Type / unit      Description
+ Enabled            enabled               Site             boolean          Whether the site is enabled.
+                                                           integer,
+ Sample interval    sample_interval_s   Site                              The site’s current sample interval.
+                                                           seconds
+                                                           timestamp,       Time of the site’s last recalibration (rota visit or
+ Last calibration   last_calibration     Site
+                                                           ms               requested).
+ Last anemometer    last_anemometer_                     timestamp,       Time the cup anemometer was last serviced.
+                    service
+                                          Site
+ service                                                   ms               null if never.
+
+                                                           object {lat,
+ Position           position              Site                              The site’s location (WGS84).
+                                                           lon}, degrees
+
+ Measurement        Key                  Level            Type / unit        Description
+                                                          timestamp,         Time the exposed reference cell was last
+ Last cleaning      last_cleaning       Site lwm-4
+                                                          ms                 cleaned. null if never.
+                                                          timestamp,         Time the evaporation pan was last topped up.
+ Last refill        last_refill         Site lwm-5
+                                                          ms                 null if never.
+
+ Active sites       active_sites        Global           integer, count     Number of enabled sites currently reporting.
+
+2.3 Events
+ Measurement        Key                  Level            Type / unit        Description
+                    arl/lwm/events/
+                                                                             One event per strike detected by at least one
+                    lightning:                            float km, float
+                                                                             enabled, online site: its distance and bearing
+ Lightning strike   distance_km,        Global           radians, array
+                                                                             (clockwise from north) from the ARL centre, and
+                    bearing_rad,                         of site ids
+                                                                             which sites detected it. ts is the strike time.
+                    detected_by
+
+                    arl/lwm/events/
+ Alert              alert
+                                         Global / Site    alert object       Alert raised or cleared (see Alerts).
+
+3 Controls
+                                                         Value (type /
+ Control            Key                  Level                                Description
+                                                         unit)
+                                                                              Enable or disable the site. A disabled site
+ Enable Site        enable_site         Site            boolean
+                                                                              publishes nothing and does not count as offline.
+                                                         integer, seconds,    How often the site samples. The next sample is
+ Set Sample
+                    sample_interval     Site            10 to 3600,          one new interval after the previous one.
+ Interval
+                                                         multiple of 10       Shorter intervals drain the battery faster.
+                                                                              Recalibrates the site’s sensors (60 s, in_
+                                                                              progress). Rejected while the latest gust is
+ Request            request_                            boolean, must        above the High Wind warning limit (sensor_
+                    recalibration
+                                         Site
+ Recalibration                                           be true              disturbed) or while the site is replaying
+                                                                              buffered samples (backfill_in_progress).
+                                                                              Fails if the site is offline.
+                                                                              Technician visit to service the cup anemometer:
+ Service            service_                            boolean, must        30 to 120 min in_progress, then last_
+                    anemometer
+                                         Site
+ Anemometer                                              be true              anemometer_service updates. Rejected while
+                                                                              Lightning Proximity is active.
+                                                                              Technician visit to clean the exposed cell: 30 to
+ Clean Reference    clean_reference_                   boolean, must        120 min in_progress, then the soiling ratio
+                    cell
+                                         Site lwm-4
+ Cell                                                    be true              returns to 1.0 and last_cleaning updates.
+                                                                              Rejected while Lightning Proximity is active.
+                                                                              Technician visit to top the pan up to 205 mm (5
+                                                         boolean, must        min). Rejected if the level is above 195 mm
+ Refill Pan         refill_pan          Site lwm-5
+                                                         be true              (not_needed) or while Lightning Proximity is
+                                                                              active.
+
+4 Alerts
+                                                  Severity, limit key
+ Alert             Key               Level                                   Description
+                                                  (default, unit)
+                                                                             An enabled site has missed 3 live samples.
+ Site Offline      site_offline     Site         warning; no limit          metadata.reason is battery, comms or no_
+                                                                             samples. Clears on the next live sample.
+
+                                                  warning, critical; lwm.
+                                                                             A sample’s gust is above the warning or
+                                                  high_wind.warn_ms
+ High Wind         high_wind        Site                                    critical limit. Clears after 10 min with the gust
+                                                  (15 m/s), lwm.high_
+                                                                             below 80% of the warning limit.
+                                                  wind.crit_ms (20 m/s)
+
+                                                  warning; lwm.
+ Lightning         lightning_                                               A strike within the limit of the ARL centre.
+                   proximity
+                                     Global       lightning.max_km (10
+ Proximity                                                                   Clears 30 min after the last such strike.
+                                                  km)
+                                                                             At least 3 strikes in the last 10 min whose
+                                                                             centre is within the limit and closer than 10
+ Storm                                            warning; lwm.storm.      min earlier. metadata.distance_km is the
+                   storm_approach   Global
+ Approach                                         approach_km (25 km)       nearest recent strike. Clears when no strike
+                                                                             has been within the limit for 30 min, or the
+                                                                             activity has moved away for 20 min.
+                                                  warning; lwm.
+                                                  temperature.min_k
+ Extreme           extreme_                                                 Temperature outside the limits for 3 samples
+                   temperature
+                                     Site         (268 K), lwm.
+ Temperature                                                                 in a row. Clears 1 K inside the limits.
+                                                  temperature.max_k
+                                                  (313 K)
+                                                  warning; lwm.rain.       Rainfall over the last hour above the limit.
+ Heavy Rain        heavy_rain       Site
+                                                  max_mm_h (10 mm/h)       Clears below half the limit.
+                                                  warning; lwm.
+                                                                             Battery voltage below the limit. Clears 0.3 V
+ Low Battery       low_battery      Site         battery.min_v (11.5
+                                                                             above it.
+                                                  V)
+                                                                             A measurement is outside its physical range
+                                                                             or has not changed for 30 samples (wind
+                                                                             ignored in calm, irradiance at night).
+ Sensor Fault      sensor_fault     Site         warning; no limit          metadata.measurement and metadata.reason
+                                                                             (out_of_range, unchanged) say which. Clears
+                                                                             when the readings are plausible again, e.g.
+                                                                             after recalibration.
+                                                  info; lwm.
+ Calibration       calibration_                                             last_calibration is older than the limit.
+                   overdue
+                                     Site         calibration.max_
+ Overdue                                                                     Clears on recalibration.
+                                                  days (30 days)
+
+                                                  warning; lwm.             Soiling ratio below the limit for 3 daylight
+ Soiling           soiling           Site lwm-4   soiling.min_ratio        samples. Clears above the limit plus 0.02 (rain
+                                                  (0.95, ratio)              or cleaning).
+                                                  info; lwm.pan.min_mm
+                                                                             Pan level outside the limits. Clears inside
+ Pan Level         pan_level        Site lwm-5   (175 mm), lwm.pan.
+                                                                             them.
+                                                  max_mm (230 mm)
+
+5 Configuration
+The service reads a TOML file (config/ + lwm.toml in the bundle, --config or ARL_CONFIG for a binary).
+Environment variables override the file, and command-line options override both (see Running the ARL).
+Defaults are the values in the provided file.
+
+5.0.1 Common keys
+ Key                          Type / unit         Default            Description
+                                                                     Random seed. The same seed, start time, scenario and
+ seed                         integer             1
+                                                                     commands give the same data. Env ARL_SEED.
+                                                                     Simulation speed relative to real time, up to the service’s
+ speedup_multiplier          float, ×            1.0
+                                                                     max_speedup. Env ARL_SPEEDUP.
+
+                                                                     Whether the service accepts commands. When false
+ control_enabled             boolean             true               every command is rejected (controls_disabled). Env
+                                                                     ARL_CONTROL_ENABLED.
+
+                              "now" or RFC
+ start_time                                      "now"              Simulated time at start-up. Env ARL_START_TIME.
+                              3339
+                                                                     Scenario file to load, empty for none. Env ARL_SCENARIO
+ scenario                     string, path        ""
+                                                                     (compose file).
+ mqtt.address                string              "mosquitto"        MQTT broker host. Env MQTT_BROKER_ADDRESS.
+ mqtt.port                   integer             1883               MQTT broker port. Env MQTT_BROKER_PORT.
+                                                                     Broker username, empty for anonymous. Env MQTT_
+ mqtt.user                   string              ""
+                                                                     BROKER_USER.
+
+ mqtt.password               string              ""                 Broker password. Env MQTT_BROKER_PASSWORD.
+                              integer,                               Outgoing messages the service buffers while the broker is
+ mqtt.queue_capacity                            200000
+                              messages                               slow or unreachable.
+ api.address                 string              "api"              ARL API host. Env ARL_API_ADDRESS.
+ api.port                    integer             8080               ARL API port. Env ARL_API_PORT.
+                                                                     Whether commands must carry a researcher code the API
+ api.require_researcher     boolean             true
+                                                                     accepts for this service.
+ api.researcher_cache_
+ ttl_s
+                              integer, s          60                 How long a researcher check is remembered.
+
+ api.alert_limits_
+ refresh_s
+                              integer, s          300                How often the alert limits are re-read from the API.
+
+                                                                     Port of the service’s /healthz endpoint (used by
+ health.port                 integer             9100
+                                                                     healthcheck). Env HEALTH_PORT.
+
+5.0.2 LWM keys ([lwm])
+ Key                          Type / unit         Default            Description
+                                                                     Number of sites, from lwm-1 upwards. The site-specific
+ num_sites                   integer, 1 to 5     5
+                                                                     instruments exist only if their site does.
+                              integer, s, 10 to                      Starting sample interval of every site (a multiple of 10).
+ sample_interval_s                              60
+                              3600                                   Change it per site with Set Sample Interval.
+ lightning_detect_km        float, km           30                 Range within which a site detects lightning.
+                                                  "/assets/arl.
+ geojson                      string, path        geojson"
+                                                                     Site map with the site positions.
+
+ Key                            Type / unit          Default            Description
+ max_speedup                   float, ×             500                Highest speedup_multiplier the service accepts.
+                                integer,
+ buffer_samples                                     720                Samples a site buffers while its link is down.
+                                samples
+ backfill_samples_per_       integer,                                Buffered samples a site re-publishes per 10 s of simulated
+                                                     10
+ tick                           samples                                 time after its link returns.
+                                float, ratio 0 to
+ initial_soiling_ratio                             0.97              Soiling ratio of the lwm-4 exposed cell at start-up.
+                                1
+
+6 Scenario events
+Events with service = "lwm" (format in Running the ARL). Every LWM event needs a site as entity.
+Weather (service = "env": storms, dust, heatwaves, cold snaps) affects every site.
+
+ Fault                 Entity               Params (default)             Effect
+                                            measurement
+                                            (temperature_k; also
+                                                                         The measurement freezes at its current value (Sensor
+                                            humidity_pct,
+ stuck_sensor         Site                                              Fault after 30 samples). Lasts until recalibration or
+                                            pressure_hpa, wind_
+                                                                         repair.
+                                            speed_ms, irradiance_
+                                            wm2)
+
+                                            measurement (as              The measurement reports an impossible value (Sensor
+ spike                 Site
+                                            above)                       Fault) for duration (default 3 samples).
+                                                                         The site stops publishing live samples for duration (Site
+ comms_loss           Site                 none
+                                                                         Offline), then backfills what it buffered.
+                                                                         The battery drains much faster for duration (Low
+ battery_fault        Site                 none
+                                                                         Battery, possibly Site Offline).
+                                                                         Sets the last calibration to days before the event
+ calibration_age      Site                 days (40)
+                                                                         (Calibration Overdue).
+ soiling               lwm-4                ratio (0.9)                  Sets the exposed cell’s soiling ratio (Soiling).
+                                                                         Sets the pan level and pauses the daily refill for duration
+ pan_level            lwm-5                level_mm (160)
+                                                                         (default 1 day) (Pan Level).
+                                                                         Ends stuck sensors, spikes, link loss and battery faults on
+ repair                Site                 none
+                                                                         the site.
+
+AI Declaration: Claude Code (Opus 5.5) - generated from the arl-sim source, reviewed
+

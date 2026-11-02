@@ -1,0 +1,13 @@
+# Keep local secrets and large simulator artifacts out of AI context.
+.env
+.env.*
+node_modules/
+dist/
+coverage/
+server/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+arl-sim.tar.gz
+arl-sim/images/
+arl-sim/bin/

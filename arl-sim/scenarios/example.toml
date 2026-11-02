@@ -1,0 +1,75 @@
+# Example scenario for your own test runs (`docs/running-the-arl.typ`, Scenarios).
+#
+#   ARL_SCENARIO=/scenarios/example.toml docker compose -f arl-test.yaml up -d lwm rta
+#
+# Every service reads the same file and applies the events addressed to it; `env` events change
+# the shared weather, so every service sees them. `at` is an offset from the start time
+# (+HH:MM:SS) or an absolute RFC 3339 time. Leave out `duration` for faults that last until a
+# `repair` event (or the matching control) fixes them.
+
+# ---- weather: a thunderstorm after 30 minutes, then a hot afternoon
+
+[[event]]
+at = "+00:30:00"
+service = "env"
+fault = "storm"
+duration = "01:30:00"
+params = { gust_ms = 26.0, speed_ms = 8.0, rain_mm_h = 30.0 }
+
+[[event]]
+at = "+03:00:00"
+service = "env"
+fault = "heatwave"
+duration = "03:00:00"
+params = { delta_k = 15.0 }
+
+# ---- RTA: one dish overheats for 20 minutes
+
+[[event]]
+at = "+00:10:00"
+service = "rta"
+entity = "dish-042"
+fault = "overheat"
+duration = "00:20:00"
+params = { peak_k = 345.0 }
+
+# ---- LWM: a site loses its link for an hour (it backfills afterwards)
+
+[[event]]
+at = "+00:15:00"
+service = "lwm"
+entity = "lwm-2"
+fault = "comms_loss"
+duration = "01:00:00"
+
+# ---- MHE: the common room's ventilation fails for two hours
+
+[[event]]
+at = "+00:20:00"
+service = "mhe"
+entity = "common"
+fault = "ventilation_fault"
+duration = "02:00:00"
+
+# ---- OPG: the battery bank drops to 25% charge
+
+[[event]]
+at = "+00:05:00"
+service = "opg"
+entity = "batteries"
+fault = "set_state"
+params = { soc_pct = 25.0 }
+
+# ---- OWT: the treatment pump fails until repaired
+
+[[event]]
+at = "+00:30:00"
+service = "owt"
+entity = "treatment"
+fault = "pump_fault"
+
+[[event]]
+at = "+02:00:00"
+service = "owt"
+entity = "treatment"
+fault = "repair"

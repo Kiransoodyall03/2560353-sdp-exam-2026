@@ -1,0 +1,22 @@
+# Common keys (`common.typ`, Configuration). Environment variables override them:
+# ARL_SEED, ARL_SPEEDUP, ARL_START_TIME, ARL_CONTROL_ENABLED, MQTT_BROKER_*, ARL_API_*,
+# ARL_SERVICE_TOKEN, HEALTH_PORT.
+seed = 1
+speedup_multiplier = 1.0
+control_enabled = true
+start_time = "now"
+scenario = ""
+
+[mqtt]
+address = "mosquitto"
+port = 1883
+
+[api]
+address = "api"
+port = 8080
+require_researcher = true
+
+[health]
+port = 9100
+
+[owt]

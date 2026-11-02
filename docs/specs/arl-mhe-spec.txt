@@ -1,0 +1,499 @@
+
+
+                  ARL Spec: Mars Habitation Experiment
+                                                                                         Brendan Griffiths
+
+Contents
+
+1 Service overview
+The Mars Habitation Experiment (MHE) is a 90-day isolation mission: a crew of five lives in a sealed,
+nine-room habitat that simulates a Mars base. Each crew member wears a vitals monitor, each room
+monitors its environment, and the crew fill in wellbeing surveys twice a day. Topic prefix: arl/mhe.
+
+ Entity kind           Ids                                          Notes
+                                                                    The habitat’s rooms (ids match the habitat plan mhe.svg).
+                       quarters-1 to quarters-5, common,            quarters-n is the private room of crew-n. Volumes:
+ room
+                       lab, hydroponics, airlock                    quarters 20 m³, common 90 m³, lab 60 m³, hydroponics 50
+                                                                    m³, airlock 12 m³.
+ crew                  crew-1 to crew-5                             The crew members.
+                                                                    The habitat as a whole: mission clock, power, subsystems,
+ service               global
+                                                                    alert summary.
+
+1.1 General state and routines
+• Mission clock: the mission runs for 90 days; mission_day counts from 1. The live deployment joins
+  the mission part-way through (day 40), so earlier days are only in the ARL API backlog. After day 90
+  the surveys stop and mission_state becomes complete.
+• Reporting: crew vitals every 60 s, room environment and the room-specific streams every 300 s (5
+  min).
+• Daily routine: the crew follow a daily routine (local time) of sleep in their own quarters, meals and
+  exercise in common, and work blocks in the lab or on hydroponics shifts. Crew location and room
+  crew_count show where everyone is.
+• Surveys: each crew member fills in a start-of-day survey in the morning and an end-of-day survey in
+  the evening. A survey not done by 09:00 (start of day) or 23:30 (end of day) is missed.
+• EVAs: about twice a week, two crew members go outside on a weekday afternoon for 2 to 3 hours.
+  They enter the airlock, it depressurises (10 min), they go outside, return, and it repressurises (10
+  min). EVA start and end are published as events.
+• Rooms: each room’s temperature, humidity and ventilation follow its set points, and occupants add
+  heat, humidity and CO₂. Sealing a room, disabling its environmental systems or a ventilation failure
+  stops the air exchange, so CO₂ builds up in an occupied room. The airlock drops to Mars pressure
+  (about 0.7 kPa) when depressurised.
+• Lighting: each room has a daily lighting window and level (dim, 5 lx, outside the window). The
+  hydroponics bay has strong grow lights.
+• Hydroponics: a 400 L reservoir feeds the crops. It is drained by evaporation and the plants and
+  refilled by the irrigation schedule. The crop goes through a 30-day cycle (germination, vegetative,
+  flowering, harvest) with an estimated yield.
+• Load: about 0.1 messages/s (5 vitals a minute, 13 room and habitat streams every 5 minutes).
+
+1.2 Message conventions
+Every service follows the same MQTT layout. <entity> is an entity id (or global for the whole service).
+
+ Topic                                  Retained          Content
+                                                          Machine-readable list of the entities, streams (with field names,
+ arl/mhe/$topology                    yes               types, units and periods), state items, events and controls of the
+                                                          service. Re-published when it changes.
+ arl/mhe/<entity>/telemetry/
+ <stream>
+                                        no                Periodic measurements.
+
+                                                          The current value of a state item, re-published when it
+ arl/mhe/<entity>/state/<item>      yes
+                                                          changes.
+ arl/mhe/events/<kind>               no                One-off events, including alert.
+ arl/mhe/cmd/<entity>/<control>     no                Commands sent by the platform.
+ arl/mhe/ack/<command_id>           no                Acknowledgements of a command.
+
+Telemetry and event payloads carry an envelope: v (schema version, integer, currently 1), ts (simulated
+time, Unix milliseconds), seq (per-topic sequence number, restarts with the service; gaps reveal lost
+messages) and entity (entity id). The measurement fields are added next to the envelope. A
+measurement that cannot be taken is null. State payloads are {"v", "ts", "entity", "item",
+"value"}.
+
+Commands are JSON {"command_id": <string>, "researcher": <researcher code>, "value":
+<value>}. The researcher must be verified by the ARL API for the service. Acknowledgements carry
+command_id, target, control, researcher, state (accepted, rejected, in_progress, completed,
+failed), progress (0 to 1 for long-running controls), reason and detail. Rejection and failure reasons:
+controls_disabled, malformed, unknown_control, unknown_target, unknown_researcher, researcher_
+defunct, researcher_not_permitted, api_unavailable, invalid_value, precondition_failed, busy
+(the target is already running a long command), fault, timeout, interrupted.
+Alerts are events on arl/mhe/events/alert with alert_id, type (the alert key below), severity (info,
+warning, critical), state (raised or cleared), value, limit, unit, message and metadata. An alert
+that escalates is raised again with the higher severity under the same alert_id. Limits come from the
+ARL API (/v1/alert-limits/ + mhe).
+Every service also publishes these:
+
+ Measurement           Key               Level         Type / unit       Description
+                                                                         Retained state. true while the service runs,
+ Online                online            Global        boolean           false when it stops or loses its broker
+                                                                         connection (last will).
+                                                       array of alert    Retained state. The ids of the alerts currently
+ Active alerts         active_alerts    Global
+                                                       ids               raised, in the order they were raised.
+
+2 Transmitted data
+
+2.1 Telemetry
+
+2.1.1 Room environment (arl/mhe/<room>/telemetry/environment, every 300 s)
+ Measurement        Key                  Level         Type / unit      Description
+ Temperature        temperature_k       Room          float, kelvin    Air temperature in the room.
+                                                       float, %
+ Humidity           humidity_pct        Room                           Relative humidity in the room.
+                                                       relative
+                                                                        Oxygen concentration (about 209,000 ppm
+ Oxygen             oxygen_ppm          Room          integer, ppm
+                                                                        normally).
+                                                                        CO₂ concentration (about 420 ppm in an empty,
+ Carbon dioxide     co2_ppm             Room          integer, ppm
+                                                                        ventilated room).
+                                                                        Air pressure (101.3 kPa; the airlock drops to
+ Pressure           pressure_kpa        Room          float, kPa
+                                                                        about 0.7 kPa when depressurised).
+ Lighting           lighting_lux        Room          integer, lux     Current light level.
+                                                                        Air exchanged with the habitat system. 0 when
+ Ventilation rate   ventilation_m3h     Room          integer, m³/h
+                                                                        sealed, disabled or failed.
+ Crew count         crew_count          Room          integer, count   Number of crew in the room.
+
+2.1.2 Hydroponics (arl/mhe/hydroponics/telemetry/hydroponics, every 300 s)
+ Measurement        Key                  Level         Type / unit      Description
+                                         Room
+ Water level        water_level_l                    float, litres    Water in the 400 L nutrient reservoir.
+                                         hydroponics
+
+ Nutrient                                Room                           Electrical conductivity of the nutrient solution
+                    nutrient_ec_mscm                 float, mS/cm
+ concentration                           hydroponics                    (about 1.2 to 2.4). Rises as water evaporates.
+                                         Room                           Acidity of the nutrient solution (about 5.5 to
+ Water pH           water_ph                          float, pH
+                                         hydroponics                    6.5).
+                                         Room                           germination, vegetative, flowering or
+ Growth stage       growth_stage                      enum
+                                         hydroponics                    harvest.
+
+                    estimated_yield_   Room                           Expected harvest of the current crop. Falls when
+ Estimated yield    kg
+                                                       float, kg
+                                         hydroponics                    water, nutrients or pH are out of range.
+
+2.1.3 Airlock (arl/mhe/airlock/telemetry/airlock, every 300 s)
+ Measurement        Key                  Level         Type / unit      Description
+                                         Room
+ Airlock state      airlock_state                     enum             pressurised, cycling or depressurised.
+                                         airlock
+
+                                         Room
+ Inner door         inner_door                        enum             open or closed. The door to the habitat.
+                                         airlock
+
+                                         Room
+ Outer door         outer_door                        enum             open or closed. The door to the outside.
+                                         airlock
+
+                                         Room
+ EVA in progress    eva_in_progress                  boolean          Whether crew are on an EVA.
+                                         airlock
+
+2.1.4 Lab equipment (arl/mhe/lab/telemetry/equipment, every 300 s)
+ Measurement         Key                   Level          Type / unit       Description
+ Equipment status    equipment_status     Room lab       enum              ok, degraded or fault.
+
+2.1.5 Vitals (arl/mhe/<crew>/telemetry/vitals, every 60 s)
+ Measurement         Key                   Level          Type / unit       Description
+                                                          integer, beats/
+ Heart rate          heart_rate_bpm      Crew                             Heart rate from the wearable.
+                                                          min
+ Body                body_temperature_
+                     k
+                                           Crew           float, kelvin     Core body temperature (about 310 K).
+ temperature
+                     respiratory_rate_                  integer,
+ Respiratory rate    bpm
+                                           Crew                             Breathing rate.
+                                                          breaths/min
+                                                                            Blood oxygen saturation. Drops in rooms with
+ Blood oxygen        spo2_pct             Crew           float, %
+                                                                            high CO₂.
+                                                                            Activity level: near 0 asleep, higher when
+ Movement            movement              Crew           float, 0 to 1
+                                                                            working, exercising or on EVA.
+ Location            location              Crew           enum              Room id the crew member is in, or outside.
+                                                          timestamp,        Time of the latest vitals message. Vitals stop
+ Heartbeat           ts (envelope)         Crew
+                                                          ms                when the wearable is off or offline.
+
+2.1.6 Habitat (arl/mhe/global/telemetry/habitat, every 300 s)
+ Measurement         Key                   Level          Type / unit       Description
+ Mission day         mission_day          Global         integer, day      Day of the mission, 1 to 90.
+ Habitat power       power_w              Global         integer, watts    Electrical power used by the habitat.
+
+2.2 State (retained)
+ Measurement         Key                   Level          Type / unit       Description
+                                                          object
+                                                          {temperature_
+                                                          k K,
+                                                                            Targets the room’s environmental systems aim
+ Set points          setpoints             Room           humidity_pct
+                                                                            for.
+                                                          %,
+                                                          ventilation_
+                                                          m3h m³/h}
+
+                                                          object
+                                                          {start, end      Daily window when the lights are on, and their
+ Lighting schedule   lighting_schedule    Room
+                                                          HH:MM, level_   level.
+                                                          lux lx}
+
+ Environmental       environmental_                                        Whether heating, humidity control and
+                     systems
+                                           Room           boolean
+ systems                                                                    ventilation are on in the room.
+                                                                            Whether the room is sealed from the habitat’s
+ Sealed              sealed                Room           boolean
+                                                                            air system.
+
+ Irrigation          irrigation_          Room           object            Daily window when the reservoir is topped up,
+ schedule            schedule              hydroponics    {start, end      and the volume added per day.
+
+ Measurement        Key                   Level       Type / unit         Description
+                                                      HH:MM,
+                                                      volume_l L}
+
+                                                                          Health of each habitat subsystem: ventilation,
+                                                      object of           heating, water, hydroponics, airlock, power_
+ Subsystems         subsystems            Global
+                                                      enums               distribution, comms, each ok, degraded or
+                                                                          fault.
+
+ Mission state      mission_state        Global      enum                running or complete.
+
+2.3 Events
+ Measurement        Key                   Level       Type / unit         Description
+                    arl/mhe/events/
+                                                                          A completed wellbeing survey. survey_type is
+                    survey: survey_
+                                                      enum, integer,      start_of_day or end_of_day. Higher is more
+                    type, mission_day,
+ Survey                                   Crew        integer scores      for every score (high stress and fatigue are bad).
+                    mood, stress,
+                                                      1 to 10             sleep_quality is only in the start-of-day
+                    fatigue, sleep_
+                                                                          survey. A missed survey produces no event.
+                    quality
+
+                    arl/mhe/events/    Room        enum, array         An EVA started or ended, and the crew taking
+ EVA
+                    eva: event, crew      airlock     of crew ids         part.
+                                          Global /
+                    arl/mhe/events/
+ Alert              alert
+                                          Room /      alert object        Alert raised or cleared (see Alerts).
+                                          Crew
+
+3 Controls
+                                                     Value (type /
+ Control            Key                   Level                            Description
+                                                     unit)
+ Adjust             adjust_                         float, kelvin, 285    Sets the room’s temperature set point. The
+                    temperature
+                                          Room
+ Temperature                                         to 300                room approaches it over about half an hour.
+ Adjust Humidity    adjust_humidity      Room       float, %, 20 to 80    Sets the room’s humidity set point.
+                                                     object {start,
+                                                     end HH:MM,
+                                                                           Sets the daily lighting window and level. The
+ Lighting                                            level_lux 0 to
+                    lighting_schedule    Room                             window may wrap past midnight. Lighting in
+ Schedule                                            1000 lx
+                                                                           quarters affects that crew member’s sleep.
+                                                     (hydroponics 0
+                                                     to 30000)}
+                                                     float, m³/h, 0 to
+ Ventilation        ventilation           Room                             Sets the room’s ventilation set point.
+                                                     400
+ Environmental      environmental_                                        Turns the room’s heating, humidity control and
+                    systems
+                                          Room       boolean
+ Systems                                                                   ventilation on or off.
+                                                                           Seals or unseals the room. A sealed room
+                                                                           exchanges no air, so CO₂ rises if it is occupied.
+ Seal Room          seal_room            Room       boolean
+                                                                           The airlock cannot be unsealed while not
+                                                                           pressurised.
+
+                                                         Value (type /
+ Control            Key                   Level                                Description
+                                                         unit)
+                                                                               Asks a crew member to check in. in_progress
+                                                                               until they respond (minutes when awake,
+ Crew Wellness      crew_wellness_                     boolean, must
+                    check
+                                          Crew                                 longer when asleep, after the EVA when
+ Check                                                   be true
+                                                                               outside), then completed with detail ok or
+                                                                               needs_support.
+
+                                                         enum:                 Cycles the airlock (10 min in_progress).
+                                          Room
+ Cycle Airlock      cycle_airlock                       pressurise or         Rejected while a door is open, during an EVA,
+                                          airlock
+                                                         depressurise          or when already in that state.
+                                                      object {start,
+ Irrigation         irrigation_          Room        end HH:MM,              Sets the daily window and volume of water
+ Schedule           schedule              hydroponics volume_l 0 to           added to the reservoir.
+                                                      120 L}
+
+4 Alerts
+                                                    Severity, limit key
+ Alert             Key                 Level                                    Description
+                                                    (default, unit)
+                                                    warning, critical; mhe.
+                                                    crew.hr_min (40 bpm),
+                                                    mhe.crew.hr_max (150     A vital sign outside its limit for 3 min; critical
+                                                    bpm), mhe.crew.temp_     when two or more are. metadata.vital,
+ Crew Health       crew_health        Crew
+                                                    max_k (311.15 K), mhe.    metadata.count and metadata.location.
+                                                    crew.resp_max (30 /       Clears when all are inside the limits for 5 min.
+                                                    min), mhe.crew.spo2_
+                                                    min (92 %)
+
+                                                                                No vitals from the wearable for 5 min
+ Crew Status       crew_status        Crew         warning; no limit           (metadata.reason wearable_offline). Clears
+                                                                                on the next vitals message.
+                                                                                A survey was not completed by its deadline
+ Survey Missed     survey_missed      Crew         info; no limit              (09:00 or 23:30). Clears on the next completed
+                                                                                survey.
+                                                    warning; mhe.survey.
+                                                                                Judged daily at 23:30: the 3-day mean mood is
+                                                    min_mood (4, score),
+                                                                                below the limit, the 3-day mean stress is
+ Survey            survey_                         mhe.survey.max_
+                   wellbeing
+                                       Crew                                     above it, or mood has dropped by more than
+ Wellbeing                                          stress (7, score), mhe.
+                                                                                the decline limit compared with a week
+                                                    survey.max_decline
+                                                                                earlier. Clears when all are back inside.
+                                                    (2, score)
+                                                    warning; mhe.room.
+                                                    temp_min_k (290 K),
+                                                    mhe.room.temp_max_k
+                                                                                Temperature or humidity outside the limits
+                                                    (298 K), mhe.room.
+ Room                                                                           for 15 min (hydroponics uses its own upper
+                   room_condition     Room         humidity_min (25 %),
+ Condition                                                                      humidity limit). Clears 0.5 K and 3 % inside
+                                                    mhe.room.humidity_
+                                                                                the limits.
+                                                    max (75 %), mhe.room.
+                                                    humidity_max_
+                                                    hydroponics (85 %)
+
+                                                         Severity, limit key
+ Alert              Key                  Level                                       Description
+                                                         (default, unit)
+                                                         warning, critical; mhe.
+                                                         air.o2_min_ppm
+                                                                                     O₂ below or CO₂ above the limits for 10 min;
+                                                         (195000 ppm), mhe.
+ Air                air_                                                            critical above the second CO₂ level.
+                    concentration
+                                         Room            air.co2_warn_ppm
+ Concentration                                                                       metadata.crew_count and metadata.sealed.
+                                                         (1500 ppm), mhe.air.
+                                                                                     Clears inside the limits for 5 min.
+                                                         co2_crit_ppm (2500
+                                                         ppm)
+                                                                                     A habitat subsystem is in fault (metadata.
+ Habitat Fault      habitat_fault       Global          critical; no limit          subsystems lists them). Clears when every
+                                                                                     subsystem is ok or degraded.
+
+The airlock is not judged for Room Condition or Air Concentration while it is cycling or depressurised.
+
+5 Configuration
+The service reads a TOML file (config/ + mhe.toml in the bundle, --config or ARL_CONFIG for a binary).
+Environment variables override the file, and command-line options override both (see Running the ARL).
+Defaults are the values in the provided file.
+
+5.0.1 Common keys
+ Key                          Type / unit         Default                Description
+                                                                         Random seed. The same seed, start time, scenario and
+ seed                         integer             1
+                                                                         commands give the same data. Env ARL_SEED.
+                                                                         Simulation speed relative to real time, up to the service’s
+ speedup_multiplier          float, ×            1.0
+                                                                         max_speedup. Env ARL_SPEEDUP.
+
+                                                                         Whether the service accepts commands. When false
+ control_enabled             boolean             true                   every command is rejected (controls_disabled). Env
+                                                                         ARL_CONTROL_ENABLED.
+
+                              "now" or RFC
+ start_time                                      "now"                  Simulated time at start-up. Env ARL_START_TIME.
+                              3339
+                                                                         Scenario file to load, empty for none. Env ARL_SCENARIO
+ scenario                     string, path        ""
+                                                                         (compose file).
+ mqtt.address                string              "mosquitto"            MQTT broker host. Env MQTT_BROKER_ADDRESS.
+ mqtt.port                   integer             1883                   MQTT broker port. Env MQTT_BROKER_PORT.
+                                                                         Broker username, empty for anonymous. Env MQTT_
+ mqtt.user                   string              ""
+                                                                         BROKER_USER.
+
+ mqtt.password               string              ""                     Broker password. Env MQTT_BROKER_PASSWORD.
+                              integer,                                   Outgoing messages the service buffers while the broker is
+ mqtt.queue_capacity                            200000
+                              messages                                   slow or unreachable.
+ api.address                 string              "api"                  ARL API host. Env ARL_API_ADDRESS.
+ api.port                    integer             8080                   ARL API port. Env ARL_API_PORT.
+                                                                         Whether commands must carry a researcher code the API
+ api.require_researcher     boolean             true
+                                                                         accepts for this service.
+
+ Key                             Type / unit           Default             Description
+ api.researcher_cache_
+ ttl_s
+                                 integer, s            60                  How long a researcher check is remembered.
+
+ api.alert_limits_
+ refresh_s
+                                 integer, s            300                 How often the alert limits are re-read from the API.
+
+                                                                           Port of the service’s /healthz endpoint (used by
+ health.port                    integer               9100
+                                                                           healthcheck). Env HEALTH_PORT.
+
+5.0.2 MHE keys ([mhe])
+ Key                             Type / unit           Default             Description
+                                                                           Number of crew members (crew-1 upwards), one per
+ crew_size                      integer, 1 to 5       5
+                                                                           quarters.
+ mission_days                   integer, days         90                  Length of the mission.
+                                                                           Mission day the service starts on. Set it higher to start
+ start_day                      integer, day          1
+                                                                           mid-mission.
+                                                                           Reporting rate of the vitals stream (whole minutes; 0.0167
+ crew_frequency_hz             float, Hz             0.0167
+                                                                           Hz is every minute).
+                                                                           Reporting rate of the room and habitat streams (0.0033 Hz
+ room_frequency_hz             float, Hz             0.0033
+                                                                           is every 5 minutes).
+ eva_per_week                  integer               2                   EVAs per week.
+ max_speedup                    float, ×              2000                Highest speedup_multiplier the service accepts.
+
+6 Scenario events
+Events with service = "mhe" (format in Running the ARL).
+
+ Fault                  Entity                Params (default)             Effect
+                                                                           The room’s ventilation stops (ventilation subsystem
+ ventilation_fault     Room                  none
+                                                                           degraded or fault; CO₂ builds up if occupied).
+                                                                           The room’s heating fails and its temperature drifts down
+ heater_fault          Room                  none
+                                                                           (Room Condition).
+                                              quantity
+                                              (temperature or              The room’s temperature or humidity reading drifts away
+ sensor_drift          Room
+                                              humidity), rate (0.2         from the true value.
+                                              per hour)
+ hydroponics_pump_
+ fault
+                        none                  none                         Irrigation stops (hydroponics subsystem degraded).
+
+                                                                           The airlock door reports open when it should not (airlock
+ airlock_door_
+ fault
+                        none                  none                         subsystem). Lasts until the airlock is cycled to
+                                                                           pressurise or a repair on airlock.
+
+                                              subsystem (name),
+                                                                           Forces a habitat subsystem’s status for duration (fault
+ subsystem              none                  status (ok, degraded,
+                                                                           raises Habitat Fault).
+                                              fault)
+
+                                              status (ok, degraded,
+ lab_equipment         none                                               Sets the lab equipment status.
+                                              fault)
+
+ Fault                 Entity         Params (default)             Effect
+                                                                   The crew member’s wearable stops sending vitals (Crew
+ wearable_offline     Crew           none
+                                                                   Status).
+                                                                   The crew member falls ill: fever and raised heart rate
+ crew_illness         Crew           fever_k (1.5 K)
+                                                                   (may raise Crew Health).
+                                                                   The crew member skips their next survey (Survey Missed
+ skip_survey          Crew           none
+                                                                   at the deadline).
+                                                                   The crew member’s surveys score worse for duration
+ wellbeing_drop       Crew           delta (0.3)
+                                                                   (may raise Survey Wellbeing).
+                                                                   Ends the faults on the room (including the hydroponics
+ repair                Room or crew   none                         pump and the airlock door for those rooms) or on the
+                                                                   crew member.
+
+AI Declaration: Claude Code (Opus 5.5) - generated from the arl-sim source, reviewed
+

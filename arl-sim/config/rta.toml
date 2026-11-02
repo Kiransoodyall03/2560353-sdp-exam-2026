@@ -1,0 +1,34 @@
+# Common keys (`common.typ`, Configuration). Environment variables override them:
+# ARL_SEED, ARL_SPEEDUP, ARL_START_TIME, ARL_CONTROL_ENABLED, MQTT_BROKER_*, ARL_API_*,
+# ARL_SERVICE_TOKEN, HEALTH_PORT.
+seed = 1
+speedup_multiplier = 1.0
+control_enabled = true
+start_time = "now"
+scenario = ""
+
+[mqtt]
+address = "mosquitto"
+port = 1883
+
+[api]
+address = "api"
+port = 8080
+require_researcher = true
+
+[health]
+port = 9100
+
+[rta]
+num_dishes = 100
+active_dishes = 80
+scan_frequency_hz = 1
+normal_frequency_hz = 0.00833
+max_subarrays = 4
+scan_grid_size = 128
+scan_overlap = 3
+redistribute_on_fault = false
+min_target_elevation_deg = 15
+geojson = "/assets/arl.geojson"
+assets_dir = "/assets/rta"
+max_speedup = 50

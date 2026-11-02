@@ -1,0 +1,25 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local configuration and secrets - only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# SQLite databases and captured runtime data
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+server/data/
+
+# ARL simulator binaries and container images (large, shipped out of band)
+arl-sim.tar.gz
+arl-sim/images/
+arl-sim/bin/
+
+# Logs and OS noise
+*.log
+.DS_Store

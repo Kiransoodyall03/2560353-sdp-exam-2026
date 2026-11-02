@@ -1,0 +1,324 @@
+
+
+                ARL Spec: On-demand Water Treatment
+                                                                                         Brendan Griffiths
+
+Contents
+
+1 Service overview
+The On-demand Water Treatment (OWT) service recycles the laboratory’s water. Used (grey) water
+collects in the intake tank, the treatment plant cleans it, and the clean water returns to storage for reuse.
+Topic prefix: arl/owt.
+
+ Entity                   Kind              Plant
+ global                   service           The plant as a whole: water consumed, power used, recycling efficiency.
+ intake                   tank              Greywater collection tank, 20,000 L.
+ treatment                plant             Filtration, UV and chemical dosing, 0 to 600 L/h.
+ storage                  tank              Clean water storage, 50,000 L.
+
+1.1 General state and routines
+• Reporting: the plant is simulated every minute but reports every 1,800 s (30 min) on each entity’s
+  water stream. This is the slowest service at the ARL.
+• Water cycle: about 60 residents use clean water from storage, with peaks in the morning and the
+  evening. Most of it returns to the intake as greywater; the rest is lost. The treatment plant pumps
+  greywater from the intake at its cleaning rate (default set point 350 L/h), returns most of it to storage
+  as clean water and rejects the rest as brine.
+• Diverting the intake: when the intake is diverted, greywater goes to the evaporation pond instead of
+  the intake. This protects the plant from contaminated water, but the water is lost.
+• Storage reserve: the plant keeps a minimum clean volume in storage. When clean water runs out, the
+  borehole supplies the residents instead; that water is consumed but not recycled.
+• Filters: filter health falls as water is treated. Dirty filters reduce the cleaning rate and the water
+  quality. A backwash (30 min, treatment paused, uses 500 L of clean water) restores much of the filter
+  health.
+• Water quality: treated water should be clear (low turbidity) and near neutral pH. Running the plant
+  hard (above about 450 L/h) or with dirty filters makes the water cloudier.
+• Recycling efficiency: clean water returned to storage over water consumed, over the trailing 24 h.
+• Load: 4 messages every 30 minutes, plus state changes, backwash events and alerts.
+
+1.2 Message conventions
+Every service follows the same MQTT layout. <entity> is an entity id (or global for the whole service).
+
+ Topic                               Retained          Content
+                                                       Machine-readable list of the entities, streams (with field names,
+ arl/owt/$topology                 yes               types, units and periods), state items, events and controls of the
+                                                       service. Re-published when it changes.
+ arl/owt/<entity>/telemetry/
+ <stream>
+                                     no                Periodic measurements.
+
+                                                       The current value of a state item, re-published when it
+ arl/owt/<entity>/state/<item>   yes
+                                                       changes.
+
+ Topic                                     Retained          Content
+ arl/owt/events/<kind>                  no                One-off events, including alert.
+ arl/owt/cmd/<entity>/<control>        no                Commands sent by the platform.
+ arl/owt/ack/<command_id>              no                Acknowledgements of a command.
+
+Telemetry and event payloads carry an envelope: v (schema version, integer, currently 1), ts (simulated
+time, Unix milliseconds), seq (per-topic sequence number, restarts with the service; gaps reveal lost
+messages) and entity (entity id). The measurement fields are added next to the envelope. A
+measurement that cannot be taken is null. State payloads are {"v", "ts", "entity", "item",
+"value"}.
+
+Commands are JSON {"command_id": <string>, "researcher": <researcher code>, "value":
+<value>}. The researcher must be verified by the ARL API for the service. Acknowledgements carry
+command_id, target, control, researcher, state (accepted, rejected, in_progress, completed,
+failed), progress (0 to 1 for long-running controls), reason and detail. Rejection and failure reasons:
+controls_disabled, malformed, unknown_control, unknown_target, unknown_researcher, researcher_
+defunct, researcher_not_permitted, api_unavailable, invalid_value, precondition_failed, busy
+(the target is already running a long command), fault, timeout, interrupted.
+Alerts are events on arl/owt/events/alert with alert_id, type (the alert key below), severity (info,
+warning, critical), state (raised or cleared), value, limit, unit, message and metadata. An alert
+that escalates is raised again with the higher severity under the same alert_id. Limits come from the
+ARL API (/v1/alert-limits/ + owt).
+Every service also publishes these:
+
+ Measurement         Key                    Level         Type / unit       Description
+                                                                            Retained state. true while the service runs,
+ Online              online                 Global        boolean           false when it stops or loses its broker
+                                                                            connection (last will).
+                                                          array of alert    Retained state. The ids of the alerts currently
+ Active alerts       active_alerts         Global
+                                                          ids               raised, in the order they were raised.
+
+2 Transmitted data
+
+2.1 Telemetry (arl/owt/<entity>/telemetry/water, every 1,800 s)
+ Measurement         Key                    Level         Type / unit       Description
+                                            Entity
+ Unclean volume      unclean_volume_l                   integer, litres   Greywater waiting in the intake tank.
+                                            intake
+
+                                                                            Rate at which the plant is currently treating
+                                            Entity
+ Cleaning rate       cleaning_rate_lph                  integer, L/h      water. 0 when disabled, backwashing, faulted or
+                                            treatment
+                                                                            the intake is empty.
+                                            Entity                          Cloudiness of the treated water (lower is
+ Turbidity           turbidity_ntu                       float, NTU
+                                            treatment                       cleaner).
+
+ Measurement         Key                   Level          Type / unit       Description
+                                           Entity
+ pH                  ph                                   float, pH         Acidity of the treated water (7 is neutral).
+                                           treatment
+
+                                           Entity
+ Pump status         pump_status                         enum              off, running or fault.
+                                           treatment
+
+                                           Entity
+ Filter health       filter_health_pct                  float, %          Condition of the filters (100% is clean).
+                                           treatment
+
+                                           Entity
+ Clean volume        clean_volume_l                     integer, litres   Clean water in storage.
+                                           storage
+
+                                                                            Water used by the residents since the previous
+ Water consumed      consumed_l           Global         integer, litres
+                                                                            report.
+                                                                            Electrical power used by the plant (UV and
+ Power               power_w              Global         integer, watts
+                                                                            pumps).
+ Recycling           recycling_                                            Clean water returned to storage over water
+                     efficiency_pct
+                                           Global         float, %
+ efficiency                                                                 consumed, over the last 24 h.
+                                                          timestamp,
+ Heartbeat           ts (envelope)         Each entity                      Time of the entity’s latest report.
+                                                          ms
+
+2.2 State (retained)
+ Measurement         Key                   Level          Type / unit       Description
+ Treatment                                 Entity
+                     enabled                              boolean           Whether the treatment plant is enabled.
+ enabled                                   treatment
+
+ Cleaning rate set                         Entity
+                     rate_setpoint_lph                  integer, L/h      The cleaning rate the plant aims for.
+ point                                     treatment
+
+                                           Entity                           Whether greywater is being diverted to the
+ Intake diverted     diverted                             boolean
+                                           intake                           evaporation pond.
+                                           Entity
+ Storage reserve     reserve_l                           integer, litres   Minimum clean volume kept in storage.
+                                           storage
+
+2.3 Events
+ Measurement         Key                   Level          Type / unit       Description
+                     arl/owt/events/    Entity
+ Backwash                                                 enum              A filter backwash started or completed.
+                     backwash: event       treatment
+
+                     arl/owt/events/    Global /
+ Alert               alert
+                                                          alert object      Alert raised or cleared (see Alerts).
+                                           entity
+
+3 Controls
+                                                          Value (type /
+ Control            Key                    Level                                 Description
+                                                          unit)
+ Enable                                    Entity                                Turns the treatment plant on or off (pumps off
+                    enable_treatment                     boolean
+ Treatment                                 treatment                             when disabled).
+                                                                                 Sets the cleaning rate set point. High rates
+ Set Cleaning                              Entity         integer, L/h, 0 to
+                    cleaning_rate                                               lower the water quality and wear the filters
+ Rate                                      treatment      600
+                                                                                 faster.
+                                                                                 Cleans the filters: 30 min in_progress
+                                                                                 (treatment paused), then completed with detail
+                                           Entity         boolean, must
+ Filter Backwash    filter_backwash                                             filters_restored. Uses 500 L of clean water,
+                                           treatment      be true
+                                                                                 so it is rejected when storage holds less (low_
+                                                                                 storage).
+
+                                           Entity                                Diverts greywater to the evaporation pond
+ Divert Intake      divert_intake                        boolean
+                                           intake                                (lost) instead of the intake.
+ Set Storage                               Entity         integer, litres, 0     Minimum clean volume to keep in storage.
+                    storage_reserve
+ Reserve                                   storage        to 40,000              Below it the borehole supplies the residents.
+
+4 Alerts
+                                                     Severity, limit key
+ Alert             Key                  Level                                     Description
+                                                     (default, unit)
+                                                     warning; the storage
+ Low Clean                              Entity                                    Clean volume below the reserve (metadata.
+                   low_clean_water                 reserve (reserve_l
+ Water                                  storage                                   reserve_l). Clears 2,000 L above it.
+                                                     state, L)
+                                                     warning; owt.intake.
+                                        Entity                                    Intake volume above the limit. metadata.
+ Intake Full       intake_full                      max_pct (95 % of
+                                        intake                                    diverted. Clears 10 points below the limit.
+                                                     capacity)
+                                                     critical; owt.quality.
+                                                                                  A report’s turbidity above the limit or pH
+                                                     max_ntu (1.0 NTU),
+                                        Entity                                    outside the limits (the other reading is in
+ Water Quality     water_quality                    owt.quality.ph_min
+                                        treatment                                 metadata). Clears after two good reports in a
+                                                     (6.5), owt.quality.ph_
+                                                                                  row.
+                                                     max (8.5)
+
+                                        Entity       warning; owt.filter.       Filter health below the limit. Clears 10 points
+ Filter Clogged    filter_clogged
+                                        treatment    min_pct (20 %)              above it.
+                                        Entity                                    The treatment pump has failed. Clears when
+ Pump Fault        pump_fault                       critical; no limit
+                                        treatment                                 it recovers.
+                                                                                  Recycling efficiency below the limit in two
+ Low Recycling     low_recycling_                  info; owt.recycling.       reports in a row. metadata.diverted and
+                   efficiency
+                                        Global
+ Efficiency                                          min_pct (70 %)              metadata.clean_volume_l. Clears 5 points
+                                                                                  above the limit.
+
+5 Configuration
+The service reads a TOML file (config/ + owt.toml in the bundle, --config or ARL_CONFIG for a binary).
+Environment variables override the file, and command-line options override both (see Running the ARL).
+Defaults are the values in the provided file.
+
+5.0.1 Common keys
+ Key                          Type / unit     Default            Description
+                                                                 Random seed. The same seed, start time, scenario and
+ seed                         integer         1
+                                                                 commands give the same data. Env ARL_SEED.
+                                                                 Simulation speed relative to real time, up to the service’s
+ speedup_multiplier          float, ×        1.0
+                                                                 max_speedup. Env ARL_SPEEDUP.
+
+                                                                 Whether the service accepts commands. When false
+ control_enabled             boolean         true               every command is rejected (controls_disabled). Env
+                                                                 ARL_CONTROL_ENABLED.
+
+                              "now" or RFC
+ start_time                                  "now"              Simulated time at start-up. Env ARL_START_TIME.
+                              3339
+                                                                 Scenario file to load, empty for none. Env ARL_SCENARIO
+ scenario                     string, path    ""
+                                                                 (compose file).
+ mqtt.address                string          "mosquitto"        MQTT broker host. Env MQTT_BROKER_ADDRESS.
+ mqtt.port                   integer         1883               MQTT broker port. Env MQTT_BROKER_PORT.
+                                                                 Broker username, empty for anonymous. Env MQTT_
+ mqtt.user                   string          ""
+                                                                 BROKER_USER.
+
+ mqtt.password               string          ""                 Broker password. Env MQTT_BROKER_PASSWORD.
+                              integer,                           Outgoing messages the service buffers while the broker is
+ mqtt.queue_capacity                        200000
+                              messages                           slow or unreachable.
+ api.address                 string          "api"              ARL API host. Env ARL_API_ADDRESS.
+ api.port                    integer         8080               ARL API port. Env ARL_API_PORT.
+                                                                 Whether commands must carry a researcher code the API
+ api.require_researcher     boolean         true
+                                                                 accepts for this service.
+ api.researcher_cache_
+ ttl_s
+                              integer, s      60                 How long a researcher check is remembered.
+
+ api.alert_limits_
+ refresh_s
+                              integer, s      300                How often the alert limits are re-read from the API.
+
+                                                                 Port of the service’s /healthz endpoint (used by
+ health.port                 integer         9100
+                                                                 healthcheck). Env HEALTH_PORT.
+
+5.0.2 OWT keys ([owt])
+ Key                          Type / unit     Default            Description
+                                                                 Reporting rate of the water streams (0.000556 Hz is every
+ frequency_hz                float, Hz       0.000556
+                                                                 30 minutes).
+ residents                    float, people   60                 Number of residents using water.
+ litres_per_person_day     float, L        120                Water use per resident per day.
+ intake_capacity_l          float, L        20000              Size of the intake tank.
+ storage_capacity_l         float, L        50000              Size of the clean storage tank.
+
+ Key                             Type / unit         Default            Description
+ initial_intake_l              float, L            10000              Greywater in the intake at start-up.
+ initial_storage_l             float, L            30000              Clean water in storage at start-up.
+ initial_filter_pct            float, %            70                 Filter health at start-up.
+ initial_reserve_l             float, L            5000               Storage reserve at start-up.
+ initial_rate_lph              float, L/h          350                Cleaning rate set point at start-up.
+ max_speedup                    float, ×            500                Highest speedup_multiplier the service accepts.
+
+6 Scenario events
+Events with service = "owt" (format in Running the ARL).
+
+ Fault                  Entity                Params (default)           Effect
+                                                                         The treatment pump fails and treatment stops (Pump
+ pump_fault            treatment             none
+                                                                         Fault).
+                                                                         Dirty water reaches the intake for duration (default 4 h):
+ intake_
+                        intake                ntu (3.5)                  treated water turns cloudy unless the intake is diverted
+ contamination
+                                                                         (Water Quality).
+                                                                         Chemical dosing fails and the pH drifts towards towards_
+ dosing_fault          treatment             towards_ph (9.0)
+                                                                         ph (Water Quality).
+
+ leak                   storage               none                       Clean storage leaks water.
+ sensor_drift          treatment             none                       The turbidity sensor reads low until the next backwash.
+ filter_
+ replacement
+                        treatment             none                       New filters: filter health returns to 100%.
+
+                                              filter_pct, storage_     Sets the filter health, clean volume and/or intake volume
+ set_state             any
+                                              l, intake_l               directly.
+                        intake,
+ repair                 treatment or          none                       Ends the faults on that entity.
+                        storage
+
+AI Declaration: Claude Code (Opus 5.5) - generated from the arl-sim source, reviewed
+

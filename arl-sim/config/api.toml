@@ -1,0 +1,15 @@
+# The ARL API (`api.typ`, Configuration). Environment variables override: API_MODE,
+# ARL_API_PORT, DATABASE_URL, ARL_SERVICE_TOKEN, ARL_ADMIN_TOKEN, ARL_SEED_DIR, MQTT_BROKER_*.
+mode = "test"
+port = 8080
+database_url = "postgres://arl:arl@postgres/arl"
+seed_dir = "/seed"
+retention_days = 75
+record = true
+
+[mqtt]
+address = "mosquitto"
+port = 1883
+
+[health]
+port = 9100

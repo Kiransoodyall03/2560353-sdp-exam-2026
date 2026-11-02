@@ -1,0 +1,368 @@
+
+
+              ARL Spec: On-demand Power Generation
+                                                                                         Brendan Griffiths
+
+Contents
+
+1 Service overview
+The On-demand Power Generation (OPG) service is the ARL’s power plant: a solar array, a battery bank
+and diesel backup generators that together supply the whole laboratory. Topic prefix: arl/opg.
+
+ Entity                   Kind                Plant
+                                              The plant as a whole: total generation, total load, supply mode,
+ global                   service
+                                              generation priority, load shedding.
+                                              1,200 kWp solar array with a central inverter (up to 1,000 kW AC), south
+ solar                    array
+                                              of the lab.
+ batteries                bank                4,000 kWh lithium battery bank, up to 800 kW charge or discharge.
+                                              Two 250 kW diesel generators, reported together as one entity, with a
+ diesel                   generators
+                                              20,000 L fuel tank.
+
+1.1 General state and routines
+• Reporting: every entity reports once a minute (60 s) on its power stream.
+• Load: the lab’s demand follows the time of day and the weather (heating and cooling), the activity of
+  the other laboratory services, and load shedding.
+• Generation priority: each minute the plant covers the load from its sources in the order set by the
+  generation priority (solar_first by default). Surplus solar charges the batteries; anything beyond
+  that is curtailed. The batteries are not discharged below the battery reserve except in an emergency.
+• Automatic backup: the generators start automatically when the batteries reach the reserve and the
+  load is not covered, and stop again once the batteries have recovered and solar covers the load. A
+  manual start or stop holds until the next automatic trigger.
+• Generators: a start takes 30 s (starting) and can fail. A stop runs the generators unloaded for a 60 s
+  cool-down. They burn fuel in proportion to their output.
+• Refuelling: a fuel delivery of up to 15,000 L arrives every 7 days at 10:00 local (capped at the tank
+  size), published as a refuel event.
+• Solar: output follows the sun and the weather, and falls slowly as dust builds up on the panels; rain
+  cleans them.
+• Load: 4 messages a minute (about 0.07 messages/s), plus state changes, refuels and alerts.
+
+1.2 Message conventions
+Every service follows the same MQTT layout. <entity> is an entity id (or global for the whole service).
+
+ Topic                                 Retained          Content
+                                                         Machine-readable list of the entities, streams (with field names,
+ arl/opg/$topology                   yes               types, units and periods), state items, events and controls of the
+                                                         service. Re-published when it changes.
+ arl/opg/<entity>/telemetry/
+ <stream>
+                                       no                Periodic measurements.
+
+ Topic                                     Retained          Content
+                                                             The current value of a state item, re-published when it
+ arl/opg/<entity>/state/<item>         yes
+                                                             changes.
+ arl/opg/events/<kind>                  no                One-off events, including alert.
+ arl/opg/cmd/<entity>/<control>        no                Commands sent by the platform.
+ arl/opg/ack/<command_id>              no                Acknowledgements of a command.
+
+Telemetry and event payloads carry an envelope: v (schema version, integer, currently 1), ts (simulated
+time, Unix milliseconds), seq (per-topic sequence number, restarts with the service; gaps reveal lost
+messages) and entity (entity id). The measurement fields are added next to the envelope. A
+measurement that cannot be taken is null. State payloads are {"v", "ts", "entity", "item",
+"value"}.
+
+Commands are JSON {"command_id": <string>, "researcher": <researcher code>, "value":
+<value>}. The researcher must be verified by the ARL API for the service. Acknowledgements carry
+command_id, target, control, researcher, state (accepted, rejected, in_progress, completed,
+failed), progress (0 to 1 for long-running controls), reason and detail. Rejection and failure reasons:
+controls_disabled, malformed, unknown_control, unknown_target, unknown_researcher, researcher_
+defunct, researcher_not_permitted, api_unavailable, invalid_value, precondition_failed, busy
+(the target is already running a long command), fault, timeout, interrupted.
+Alerts are events on arl/opg/events/alert with alert_id, type (the alert key below), severity (info,
+warning, critical), state (raised or cleared), value, limit, unit, message and metadata. An alert
+that escalates is raised again with the higher severity under the same alert_id. Limits come from the
+ARL API (/v1/alert-limits/ + opg).
+Every service also publishes these:
+
+ Measurement         Key                    Level         Type / unit      Description
+                                                                           Retained state. true while the service runs,
+ Online              online                 Global        boolean          false when it stops or loses its broker
+                                                                           connection (last will).
+                                                          array of alert   Retained state. The ids of the alerts currently
+ Active alerts       active_alerts         Global
+                                                          ids              raised, in the order they were raised.
+
+2 Transmitted data
+
+2.1 Telemetry (arl/opg/<entity>/telemetry/power, every 60 s)
+ Measurement         Key                    Level         Type / unit      Description
+                     total_generation_
+ Total generation    w
+                                            Global        integer, watts   Power produced by all sources together.
+
+ Total load          total_load_w         Global        integer, watts   Power demanded by the laboratory.
+
+ Measurement        Key                   Level          Type / unit       Description
+                                                                           solar, battery or diesel when one source
+ Supply mode        supply_mode          Global         enum
+                                                                           supplies more than 90% of the load, else mixed.
+ Solar output       power_output_w      Entity solar   integer, watts    AC power delivered by the solar array.
+ Solar irradiance   irradiance_wm2       Entity solar   integer, W/m²     Solar radiation on the array.
+ Panel              panel_                                                Temperature of the panels. Hot panels produce a
+                    temperature_k
+                                          Entity solar   float, kelvin
+ temperature                                                               little less power.
+ Inverter status    inverter_status      Entity solar   enum              online, offline (array disabled) or fault.
+
+                    state_of_charge_   Entity
+ State of charge    pct
+                                                         float, %          Energy stored as a percentage of capacity.
+                                          batteries
+
+                                          Entity                           Power flowing into (positive, charging) or out of
+ Battery power      battery_power_w                    integer, watts
+                                          batteries                        (negative, discharging) the bank.
+ Battery            battery_             Entity                           Temperature of the battery bank. Rises with
+                    temperature_k
+                                                         float, kelvin
+ temperature                              batteries                        heavy charging or discharging.
+                    battery_health_     Entity                           Remaining capacity relative to new. Falls slowly
+ Battery health     pct
+                                                         float, %
+                                          batteries                        with use.
+                                          Entity
+ Fuel level         fuel_level_pct                     float, %          Diesel in the tank as a percentage of 20,000 L.
+                                          diesel
+
+                                          Entity
+ Generator output   power_output_w                     integer, watts    Power delivered by the generators.
+                                          diesel
+
+                                          Entity
+ Generator status   generator_status                    enum              off, starting, running or fault.
+                                          diesel
+
+ Generator                                Entity
+                    runtime_h                           float, hours      Total running hours of the generators.
+ runtime                                  diesel
+
+                                                         timestamp,
+ Heartbeat          ts (envelope)         Each entity                      Time of the entity’s latest message.
+                                                         ms
+
+2.2 State (retained)
+ Measurement        Key                   Level          Type / unit       Description
+ Generation         generation_
+                    priority
+                                          Global         enum              solar_first, battery_first or diesel_first.
+ priority
+ Load shedding      load_shed            Global         boolean           Whether non-critical load is being shed.
+ Solar enabled      enabled               Entity solar   boolean           Whether the solar array is enabled.
+                                          Entity
+ Battery reserve    reserve_pct                         float, %          Minimum state of charge kept for emergencies.
+                                          batteries
+
+2.3 Events
+ Measurement        Key                   Level          Type / unit       Description
+                    arl/opg/events/
+                                          Entity         integer litres,   A fuel delivery arrived: litres added and the fuel
+ Refuel             refuel: litres,
+                                          diesel         float %           level afterwards.
+                    fuel_level_pct
+
+                    arl/opg/events/    Global /
+ Alert              alert
+                                                         alert object      Alert raised or cleared (see Alerts).
+                                          entity
+
+3 Controls
+                                                        Value (type /
+ Control            Key                   Level                               Description
+                                                        unit)
+                                                                              Order in which the sources cover the load.
+                                                                              solar_first (default) uses solar, then batteries,
+                                                        enum: solar_
+                                                                              then diesel; battery_first draws on the
+ Set Generation     generation_                        first, battery_
+                    priority
+                                          Global                              batteries before solar (to cycle the bank);
+ Priority                                               first, diesel_
+                                                                              diesel_first loads the running generators
+                                                        first
+                                                                              first (for generator testing). Applies from the
+                                                                              next minute.
+                                                                              Sheds non-critical load (part of the housing and
+ Load Shedding      load_shed            Global        boolean
+                                                                              lab load and the water treatment plant).
+ Enable Solar       enable_solar_       Entity                              Enables or disables the array. Disabled, the
+                    array
+                                                        boolean
+ Array                                    solar                               inverter is offline and produces nothing.
+ Set Battery                              Entity
+                    battery_reserve                    float, %, 10 to 80    Minimum state of charge kept for emergencies.
+ Reserve                                  batteries
+
+                                                                              Starts the generators: in_progress while
+                                                                              starting (30 s), completed when running,
+                                          Entity        boolean, must
+ Start Generator    start_generator                                          failed (start_failed) if the start fails.
+                                          diesel        be true
+                                                                              Rejected if fuel is below 2% (low_fuel) or they
+                                                                              are already running.
+                                                                              Stops the generators after a 60 s cool-down.
+                                          Entity        boolean, must
+ Stop Generator     stop_generator                                           Only while running. Accepted even if it leaves
+                                          diesel        be true
+                                                                              the load uncovered.
+
+4 Alerts
+Every alert carries the current supply_mode in its metadata.
+
+                                                   Severity, limit key
+ Alert             Key                 Level                                   Description
+                                                   (default, unit)
+                                                                               The load cannot be covered by the available
+ Supply            supply_                                                    generation. metadata.unserved_w is the
+                   shortfall
+                                       Global      critical; no limit
+ Shortfall                                                                     uncovered load (W). Clears after 5 minutes
+                                                                               covered.
+                                                                               The diesel generators are supplying power.
+ Backup Active     backup_active      Global      info; no limit
+                                                                               Clears when they are off.
+                                                                               With irradiance above 200 W/m², the array’s
+                                                                               output is below the limit ratio of its expected
+ Solar           solar_          Entity           warning; opg.solar.
+                                                                               output for 15 min. metadata.expected_w and
+ Underperformanceunderperformance solar            min_ratio (0.8, ratio)
+                                                                               metadata.output_w. Clears above the ratio
+                                                                               plus 0.05 for 15 min.
+                                                   warning, critical; opg.    State of charge below the warning limit;
+                                       Entity      battery.warn_pct (30      critical when below the reserve (metadata.
+ Low Battery       low_battery
+                                       batteries   %), critical below the      reserve_pct). Clears 5 points above the
+                                                   battery reserve             warning limit.
+
+                                                           Severity, limit key
+ Alert              Key                    Level                                       Description
+                                                           (default, unit)
+                                                           warning; opg.
+ Battery            battery_              Entity                                      Battery temperature above the limit for 10
+                                                           battery.max_temp_k
+ Temperature        temperature            batteries                                   min. Clears 3 K below it.
+                                                           (318 K)
+                                           Entity          warning; opg.fuel.        Fuel level below the limit. Clears when
+ Low Fuel           low_fuel
+                                           diesel          min_pct (25 %)             refuelled above it.
+                                                                                       A generator start failed or a running
+                                           Entity
+ Generator Fault    generator_fault                       critical; no limit          generator faulted. Clears on the next
+                                           diesel
+                                                                                       successful start.
+
+5 Configuration
+The service reads a TOML file (config/ + opg.toml in the bundle, --config or ARL_CONFIG for a binary).
+Environment variables override the file, and command-line options override both (see Running the ARL).
+Defaults are the values in the provided file.
+
+5.0.1 Common keys
+ Key                            Type / unit         Default                Description
+                                                                           Random seed. The same seed, start time, scenario and
+ seed                           integer             1
+                                                                           commands give the same data. Env ARL_SEED.
+                                                                           Simulation speed relative to real time, up to the service’s
+ speedup_multiplier            float, ×            1.0
+                                                                           max_speedup. Env ARL_SPEEDUP.
+
+                                                                           Whether the service accepts commands. When false
+ control_enabled               boolean             true                   every command is rejected (controls_disabled). Env
+                                                                           ARL_CONTROL_ENABLED.
+
+                                "now" or RFC
+ start_time                                        "now"                  Simulated time at start-up. Env ARL_START_TIME.
+                                3339
+                                                                           Scenario file to load, empty for none. Env ARL_SCENARIO
+ scenario                       string, path        ""
+                                                                           (compose file).
+ mqtt.address                  string              "mosquitto"            MQTT broker host. Env MQTT_BROKER_ADDRESS.
+ mqtt.port                     integer             1883                   MQTT broker port. Env MQTT_BROKER_PORT.
+                                                                           Broker username, empty for anonymous. Env MQTT_
+ mqtt.user                     string              ""
+                                                                           BROKER_USER.
+
+ mqtt.password                 string              ""                     Broker password. Env MQTT_BROKER_PASSWORD.
+                                integer,                                   Outgoing messages the service buffers while the broker is
+ mqtt.queue_capacity                              200000
+                                messages                                   slow or unreachable.
+ api.address                   string              "api"                  ARL API host. Env ARL_API_ADDRESS.
+ api.port                      integer             8080                   ARL API port. Env ARL_API_PORT.
+                                                                           Whether commands must carry a researcher code the API
+ api.require_researcher       boolean             true
+                                                                           accepts for this service.
+ api.researcher_cache_
+ ttl_s
+                                integer, s          60                     How long a researcher check is remembered.
+
+ api.alert_limits_
+ refresh_s
+                                integer, s          300                    How often the alert limits are re-read from the API.
+
+ Key                              Type / unit         Default            Description
+                                                                         Port of the service’s /healthz endpoint (used by
+ health.port                     integer             9100
+                                                                         healthcheck). Env HEALTH_PORT.
+
+5.0.2 OPG keys ([opg])
+ Key                              Type / unit         Default            Description
+                                                                         Reporting rate of the power streams (whole minutes;
+ frequency_hz                    float, Hz           0.0167
+                                                                         0.0167 Hz is every minute).
+ solar_kwp                       float, kW           1200               Peak DC power of the solar array.
+ inverter_kw                     float, kW           1000               Maximum AC output of the inverter.
+ battery_kwh                     float, kWh          4000               Capacity of the battery bank.
+ battery_max_kw                 float, kW           800                Maximum battery charge or discharge power.
+ generators                       integer             2                  Number of diesel generators.
+ generator_kw                    float, kW           250                Rating of each generator.
+ fuel_tank_l                    float, L            20000              Fuel tank size.
+ refuel_every_days              integer, days       7                  Days between fuel deliveries.
+ initial_soc_pct                float, %            70                 Battery state of charge at start-up.
+                                  float, %, 10 to
+ initial_reserve_pct                                20                 Battery reserve at start-up.
+                                  80
+ initial_fuel_pct               float, %            80                 Fuel level at start-up.
+                                  float, ratio 0 to
+ initial_soiling                                     0.97              Cleanliness of the solar panels at start-up (1 is clean).
+                                  1
+ array_lat                       float, degrees      -31.2297564       Latitude of the solar array (for the weather model).
+ array_lon                       float, degrees      21.6889263        Longitude of the solar array.
+ max_speedup                     float, ×            500                Highest speedup_multiplier the service accepts.
+
+6 Scenario events
+Events with service = "opg" (format in Running the ARL). Weather (service = "env") also affects the
+OPG: storms and dust reduce solar output, and heat and cold change the load.
+
+ Fault                   Entity                Params (default)           Effect
+                                                                          The inverter fails: no solar output (inverter_status
+ inverter_fault         solar                 none
+                                                                          fault).
+
+                                                                          Part of the array goes down: lower solar output (Solar
+ string_failure         solar                 none
+                                                                          Underperformance).
+ battery_cell_                                                          A cell fault heats the bank and costs some battery health
+ fault
+                         batteries             none
+                                                                          (Battery Temperature).
+ generator_fail_
+ start
+                         diesel                none                       The next generator start fails (Generator Fault).
+
+ generator_trip         diesel                none                       Running generators fail (Generator Fault).
+                                                                          The fuel level drops steadily until the next refuel (Low
+ fuel_leak              diesel                none
+                                                                          Fuel).
+
+ Fault                 Entity         Params (default)            Effect
+                                                                  Sets the battery state of charge and/or the fuel level
+ set_state            any            soc_pct, fuel_pct
+                                                                  directly.
+ soiling               solar          ratio                       Sets the panels’ cleanliness; rain cleans them again.
+                       solar,
+ repair                batteries or   none                        Ends the faults on that entity.
+                       diesel
+
+AI Declaration: Claude Code (Opus 5.5) - generated from the arl-sim source, reviewed
+

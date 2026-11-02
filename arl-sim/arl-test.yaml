@@ -1,0 +1,92 @@
+# The ARL on your own machine (`docs/running-the-arl.typ`). Run from the folder that holds this
+# file next to config/, scenarios/ and mosquitto/:
+#
+#   docker compose -f arl-test.yaml up -d lwm
+#
+# Starting a service also starts what it needs (the MQTT broker, the ARL API and its database).
+# Optional settings: ARL_SEED, ARL_SPEEDUP, ARL_START_TIME, ARL_SCENARIO, e.g.
+#   ARL_SPEEDUP=10 ARL_SCENARIO=/scenarios/example.toml docker compose -f arl-test.yaml up -d lwm
+
+x-service: &service
+  read_only: true
+  tmpfs: [/tmp]
+  restart: unless-stopped
+  depends_on:
+    mosquitto: { condition: service_started }
+    api: { condition: service_healthy }
+  volumes:
+    - ./config:/config:ro
+    - ./scenarios:/scenarios:ro
+  command: ["--scenario", "${ARL_SCENARIO:-}"]
+
+x-env: &env
+  ARL_SEED: ${ARL_SEED:-1}
+  ARL_SPEEDUP: ${ARL_SPEEDUP:-1}
+  ARL_START_TIME: ${ARL_START_TIME:-now}
+  RUST_LOG: ${RUST_LOG:-info}
+
+services:
+  mosquitto:
+    image: docker.io/library/eclipse-mosquitto:2
+    restart: unless-stopped
+    ports: ["1883:1883"]
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  postgres:
+    image: docker.io/library/postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arl
+      POSTGRES_PASSWORD: arl
+      POSTGRES_DB: arl
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arl -d arl"]
+      interval: 5s
+      retries: 20
+
+  api:
+    image: docker.io/arl/api:0.1.0
+    read_only: true
+    tmpfs: [/tmp]
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      mosquitto: { condition: service_started }
+    environment:
+      ARL_SERVICE_TOKEN: test-service-token
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - ./config:/config:ro
+    ports: ["8080:8080"]
+
+  rta:
+    <<: *service
+    image: docker.io/arl/rta:0.1.0
+    environment:
+      <<: *env
+      ARL_SERVICE_TOKEN: test-service-token
+
+  mhe:
+    <<: *service
+    image: docker.io/arl/mhe:0.1.0
+    environment: *env
+
+  lwm:
+    <<: *service
+    image: docker.io/arl/lwm:0.1.0
+    environment: *env
+
+  opg:
+    <<: *service
+    image: docker.io/arl/opg:0.1.0
+    environment: *env
+
+  owt:
+    <<: *service
+    image: docker.io/arl/owt:0.1.0
+    environment: *env
+
+volumes:
+  pgdata:
