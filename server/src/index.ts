@@ -7,7 +7,7 @@ import { ScheduleRunner } from './commands/schedules.js';
 import { Platform } from './core/platform.js';
 import { openDb } from './db/index.js';
 import { connectBroker } from './mqtt/client.js';
-import { createGenericPlugin } from './plugins/generic.js';
+import { createLwmPlugin } from './plugins/lwm/index.js';
 import { createOpgPlugin } from './plugins/opg/index.js';
 import { createRtaPlugin } from './plugins/rta/index.js';
 
@@ -19,7 +19,7 @@ async function main() {
     db,
     api: new ArlApiClient(cfg.api.baseUrl),
     log: app.log,
-    plugins: [createRtaPlugin(), createGenericPlugin('lwm'), createOpgPlugin()],
+    plugins: [createRtaPlugin(), createLwmPlugin(), createOpgPlugin()],
   });
   await registerRoutes(app, platform);
 

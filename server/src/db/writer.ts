@@ -68,6 +68,8 @@ export class BatchWriter {
   private degradedSince: number | null = null;
   onDegradedChange: ((degraded: boolean) => void) | null = null;
   onError: ((err: unknown) => void) | null = null;
+  /** Called once after a batch commits successfully, with the batch's parsed messages (e.g. replay snapshots). */
+  onFlush: ((batch: Parsed[]) => void) | null = null;
 
   constructor(
     private readonly db: Db,
@@ -125,9 +127,10 @@ export class BatchWriter {
     }
     const batch = this.queue.splice(0, this.opt.maxRowsPerTxn);
     const started = performance.now();
+    const parsed: Parsed[] = [];
+    let committed = false;
     try {
       this.db.transaction(() => {
-        const parsed: Parsed[] = [];
         for (const { raw, parsed: p } of batch) {
           this.writeRaw(raw);
           if (p) for (const x of p) parsed.push(x);
@@ -135,6 +138,7 @@ export class BatchWriter {
         for (const persist of this.persisters) persist(parsed, this.db);
       })();
       this.stats.written += batch.length;
+      committed = true;
     } catch (err) {
       this.stats.errors++;
       this.onError?.(err);
@@ -148,6 +152,15 @@ export class BatchWriter {
       } catch (err2) {
         this.stats.dropped += batch.length;
         this.onError?.(err2);
+      }
+    }
+    if (committed) {
+      // one hook call after the batch is committed; kept out of the transaction's catch so a
+      // subscriber error can never trigger the raw-only rewrite fallback above.
+      try {
+        this.onFlush?.(parsed);
+      } catch (err) {
+        this.onError?.(err);
       }
     }
     this.stats.flushes++;

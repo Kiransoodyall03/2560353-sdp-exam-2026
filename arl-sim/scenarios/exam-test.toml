@@ -1,0 +1,71 @@
+# exam-test.toml — a ~20 simulated-minute incident run used by `npm run test:int` and the README.
+#
+# Start the stack with this scenario loaded and time compressed (see docs/specs/running-the-arl.txt):
+#
+#   ARL_SPEEDUP=10 ARL_SCENARIO=/scenarios/exam-test.toml \
+#     podman compose -f arl-test.yaml up -d api rta lwm opg
+#
+# Every service reads the same file and applies the events addressed to it. `env` events change the
+# shared weather, so all services see them at once. `at` is an offset from the start time (+HH:MM:SS).
+# Each event is commented with the alert it should raise (alert keys are from docs/specs/arl-*-spec.txt).
+# Offsets are kept under ~20 sim-minutes so the whole run plays out in ~2 real minutes at speedup 10.
+
+# ---- OPG: low solar output. Part of the array goes down, so with the sun up the output is below
+#      80% of expected for 15 min -> Solar Underperformance (solar_underperformance, warning).
+#      (The storm below also darkens the array, reinforcing the low-solar condition.)
+[[event]]
+at = "+00:01:00"
+service = "opg"
+entity = "solar"
+fault = "string_failure"
+
+# ---- OPG: arm the next generator start to fail -> Generator Fault (generator_fault, critical)
+#      when the plant calls on the generators below.
+[[event]]
+at = "+00:02:00"
+service = "opg"
+entity = "diesel"
+fault = "generator_fail_start"
+
+# ---- OPG: drop the bank below its 20% reserve. With low solar the load is uncovered, so the plant
+#      auto-starts the generators (which fail, above) -> Low Battery (low_battery, critical below the
+#      reserve) and, if the load still cannot be covered, Supply Shortfall (supply_shortfall, critical).
+[[event]]
+at = "+00:03:00"
+service = "opg"
+entity = "batteries"
+fault = "set_state"
+params = { soc_pct = 15.0 }
+
+# ---- RTA: one dish overheats towards 345 K for 12 min -> Dish Temperature
+#      (dish_temperature, warning at 333 K, critical at 343 K; fault code overheat).
+[[event]]
+at = "+00:05:00"
+service = "rta"
+entity = "dish-042"
+fault = "overheat"
+duration = "00:12:00"
+params = { peak_k = 345.0 }
+
+# ---- LWM: a site loses its link for 8 min -> Site Offline (site_offline, warning, reason comms).
+#      When the link returns the site re-publishes what it buffered with backfill:true (old ts/seq),
+#      which the platform stores but never treats as live.
+[[event]]
+at = "+00:06:00"
+service = "lwm"
+entity = "lwm-2"
+fault = "comms_loss"
+duration = "00:08:00"
+
+# ---- weather: a thunderstorm whose gust front reaches the ARL after 8 min, for 12 min. One shared
+#      event drives several services at once:
+#        RTA -> Wind Stow (wind_stow, warning) as the gust passes 15 m/s for 60 s; the array parks.
+#        LWM -> High Wind (high_wind, warning/critical), Lightning Proximity (lightning_proximity) and
+#               Storm Approach (storm_approach) from the strikes, Heavy Rain (heavy_rain).
+#        OPG -> the array darkens, deepening the low-solar condition above.
+[[event]]
+at = "+00:08:00"
+service = "env"
+fault = "storm"
+duration = "00:12:00"
+params = { gust_ms = 26.0, speed_ms = 10.0, rain_mm_h = 30.0 }

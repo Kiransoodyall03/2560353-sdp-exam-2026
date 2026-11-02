@@ -47,7 +47,7 @@ services:
       retries: 20
 
   api:
-    image: docker.io/arl/api:0.1.0
+    image: localhost/arl/api:0.1.0
     read_only: true
     tmpfs: [/tmp]
     restart: unless-stopped
@@ -63,29 +63,29 @@ services:
 
   rta:
     <<: *service
-    image: docker.io/arl/rta:0.1.0
+    image: localhost/arl/rta:0.1.0
     environment:
       <<: *env
       ARL_SERVICE_TOKEN: test-service-token
 
   mhe:
     <<: *service
-    image: docker.io/arl/mhe:0.1.0
+    image: localhost/arl/mhe:0.1.0
     environment: *env
 
   lwm:
     <<: *service
-    image: docker.io/arl/lwm:0.1.0
+    image: localhost/arl/lwm:0.1.0
     environment: *env
 
   opg:
     <<: *service
-    image: docker.io/arl/opg:0.1.0
+    image: localhost/arl/opg:0.1.0
     environment: *env
 
   owt:
     <<: *service
-    image: docker.io/arl/owt:0.1.0
+    image: localhost/arl/owt:0.1.0
     environment: *env
 
 volumes:
