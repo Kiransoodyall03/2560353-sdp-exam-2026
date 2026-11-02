@@ -19,6 +19,7 @@ import type { Db } from '../db/index.js';
 import { BatchWriter, genericPersister, type Persister, type WriterOptions } from '../db/writer.js';
 import type { Logger } from '../log.js';
 import type { Plugin, PlatformContext } from '../plugins/types.js';
+import { Snapshotter } from '../replay/snapshotter.js';
 import { ResearcherVerifier } from '../researchers/verify.js';
 import { SimClock } from './clock.js';
 import { parseMessage, type Parsed } from './parse.js';
@@ -51,6 +52,8 @@ export class Platform {
   readonly sse: SseHub;
   readonly aggregator = new Aggregator();
   readonly writer: BatchWriter;
+  /** Checkpoints each plugin's reducer state to state_snapshots every 60 s of sim time (replay seeks). */
+  readonly snapshotter: Snapshotter;
   readonly alertStore: AlertStore;
   readonly alerts: AlertWorkflow;
   readonly enricher: PlaceholderEnricher;
@@ -100,6 +103,7 @@ export class Platform {
       this.aggregator.flush(db);
     };
     this.writer = new BatchWriter(this.db, [genericPersister(), pluginPersister, aggregatePersister], deps.writer);
+    this.snapshotter = new Snapshotter(this.db, this.plugins, this.state);
     this.writer.onDegradedChange = (d) => {
       const now = this.clock.globalNow();
       if (d) {
@@ -116,6 +120,8 @@ export class Platform {
       } else this.alerts.clearPlatform('ingestion', 'ingestion_degraded', now);
     };
     this.writer.onError = (err) => this.log.error({ err }, 'writer flush failed');
+    // one call after a batch commits: checkpoint plugin state so a replay seek can restore + fold forward
+    this.writer.onFlush = (batch) => this.snapshotter.onFlush(batch);
 
     this.ctx = {
       db: this.db,

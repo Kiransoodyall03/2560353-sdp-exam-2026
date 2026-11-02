@@ -11,6 +11,7 @@ import { alertRoutes } from './routes/alerts.js';
 import { commandRoutes } from './routes/commands.js';
 import { coreRoutes } from './routes/core.js';
 import { presetRoutes } from './routes/presets.js';
+import { replayRoutes } from './routes/replay.js';
 import { researcherGuard } from './routes/researcher.js';
 import { scheduleRoutes } from './routes/schedules.js';
 
@@ -50,6 +51,9 @@ export async function createServer(
 }
 
 export async function registerRoutes(app: FastifyInstance, platform: Platform): Promise<void> {
+  // replay first: its onRequest hook only guards routes registered after it, so it must precede the
+  // command / preset / schedule routes to lock out controls while a replay session header is present
+  replayRoutes(app, platform);
   // one guard (and one failure limiter) for every route that needs a researcher code
   const guard = researcherGuard(platform);
   coreRoutes(app, platform);
