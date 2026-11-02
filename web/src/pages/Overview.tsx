@@ -9,17 +9,27 @@ const NAMES: Record<string, string> = {
   lwm: 'Local weather monitoring',
   opg: 'Outpost power grid',
 };
-/** Wall-clock silence after which a service counts as stale. */
-const STALE_WALL_MS = 15_000;
+
+/**
+ * Staleness comes from the server, which knows each stream's expected period. A wall-clock guess
+ * mislabels the slow services: weather and power publish once a minute against the telescope's 5 s.
+ */
+function streamState(h: ServiceHealthDTO): { silent: boolean; state: string; tone: Tone } {
+  if (h.online === false) return { silent: false, state: 'Offline', tone: 'bad' };
+  if (h.online === null) return { silent: false, state: 'Unknown', tone: 'idle' };
+  if (h.silent.length > 0) return { silent: true, state: 'Stale', tone: 'warn' };
+  return { silent: false, state: 'Online', tone: 'ok' };
+}
 
 export function OverviewPage() {
   const { overview } = useLive();
   if (!overview) return <Loading what="overview" />;
   const p = overview.platform;
   const a = overview.alerts;
-  const live = overview.services.filter((s) => !isStale(s.health, p.wallTs) && s.health.online === true).length;
+  const live = overview.services.filter((s) => s.health.online === true && s.health.silent.length === 0).length;
   const unacked = a.unacked.critical + a.unacked.warning + a.unacked.info;
   const down = overview.services.length - live;
+  const silentStreams = overview.services.reduce((n, s) => n + s.health.silent.length, 0);
 
   return (
     <div className="page">
@@ -34,8 +44,8 @@ export function OverviewPage() {
           }}
           cause={
             down > 0
-              ? `${down} service${down === 1 ? '' : 's'} silent for more than ${STALE_WALL_MS / 1000} s.`
-              : 'All services reported data in the last 15 s.'
+              ? `${down} service${down === 1 ? '' : 's'} not reporting: ${silentStreams} stream${silentStreams === 1 ? '' : 's'} past the expected period.`
+              : 'Every stream is reporting within its expected period.'
           }
         />
         <KpiTile
@@ -81,7 +91,7 @@ export function OverviewPage() {
             </thead>
             <tbody>
               {overview.services.map((s) => (
-                <ServiceRow key={s.health.service} s={s} wallNow={p.wallTs} />
+                <ServiceRow key={s.health.service} s={s} />
               ))}
             </tbody>
           </table>
@@ -131,15 +141,9 @@ export function OverviewPage() {
   );
 }
 
-function isStale(h: ServiceHealthDTO, wallNow: number): boolean {
-  return h.lastSeenWallTs === null || wallNow - h.lastSeenWallTs > STALE_WALL_MS;
-}
-
-function ServiceRow({ s, wallNow }: { s: ServiceOverviewDTO; wallNow: number }) {
+function ServiceRow({ s }: { s: ServiceOverviewDTO }) {
   const h = s.health;
-  const stale = isStale(h, wallNow);
-  const tone: Tone = h.online === false ? 'bad' : h.online === null ? 'idle' : stale ? 'warn' : 'ok';
-  const state = h.online === false ? 'Offline' : h.online === null ? 'Unknown' : stale ? 'Stale' : 'Online';
+  const { silent, state, tone } = streamState(h);
   return (
     <tr>
       <td>
@@ -148,6 +152,11 @@ function ServiceRow({ s, wallNow }: { s: ServiceOverviewDTO; wallNow: number }) 
       </td>
       <td className="small">
         <StatusPill tone={tone}>{state}</StatusPill>
+        {silent && (
+          <div className="muted small">
+            {h.silent.length} stream{h.silent.length === 1 ? '' : 's'} silent
+          </div>
+        )}
       </td>
       <td title={fmtAgo(h.lastSeenSimTs, h.simNow)}>
         {fmtTs(h.lastSeenSimTs)}
