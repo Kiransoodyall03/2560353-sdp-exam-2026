@@ -1,6 +1,7 @@
 // Wind rose: 16 direction bins as petals around a compass, radius weighted by how hard the wind blew from
 // that direction (sum of wind_speed_ms), colour by the mean speed in the bin. Pure SVG so it stays crisp at
 // any size and reads well next to the site cards. The bins come from the server (plugins/lwm/derive.ts).
+import { rampAt, rgbCss, sequentialStops, useThemeColors } from '../../lib/colors';
 import type { WindRoseBin } from '../../lib/lwm';
 
 const SIZE = 240;
@@ -14,16 +15,8 @@ function polar(angleDeg: number, r: number): [number, number] {
   return [CX + r * Math.sin(a), CY - r * Math.cos(a)];
 }
 
-/** Sequential blue→amber by mean speed fraction, matching the map ramp's feel. */
-function speedColour(t: number): string {
-  const x = Math.min(1, Math.max(0, t));
-  const r = Math.round(60 + x * 195);
-  const g = Math.round(120 + x * 60);
-  const b = Math.round(200 - x * 150);
-  return `rgb(${r}, ${g}, ${b})`;
-}
-
 export function WindRose({ bins, label = 'Wind rose' }: { bins: WindRoseBin[]; label?: string }) {
+  const stops = sequentialStops(useThemeColors());
   const maxSum = Math.max(1, ...bins.map((b) => b.sumSpeedMs));
   const maxMean = Math.max(1e-6, ...bins.map((b) => b.meanSpeedMs ?? 0));
   const rings = [0.25, 0.5, 0.75, 1];
@@ -68,19 +61,19 @@ export function WindRose({ bins, label = 'Wind rose' }: { bins: WindRoseBin[]; l
               <path
                 key={`p-${b.deg}`}
                 d={d}
-                fill={speedColour(mean / maxMean)}
-                fillOpacity={0.72}
-                stroke="rgba(13,17,23,0.6)"
+                fill={rgbCss(rampAt(stops, mean / maxMean))}
+                fillOpacity={0.8}
+                stroke="var(--line-strong)"
                 strokeWidth={0.5}
               >
                 <title>{`${b.label}: ${b.count} samples, mean ${mean.toFixed(1)} m/s`}</title>
               </path>
             );
           })}
-        <circle cx={CX} cy={CY} r={2} fill="var(--muted)" />
+        <circle cx={CX} cy={CY} r={2} fill="var(--ink-muted)" />
         {!any && (
           <text x={CX} y={CY} textAnchor="middle" dominantBaseline="middle" className="rose-empty">
-            no wind yet
+            No wind yet
           </text>
         )}
       </svg>

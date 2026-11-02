@@ -34,7 +34,7 @@ export function DishGrid({
         continue;
       }
       const s = d.subarray;
-      const colour = s ? (colours.get(s) ?? '#888') : 'transparent';
+      const colour = s ? (colours.get(s) ?? 'var(--ink-muted)') : 'transparent';
       const edge = (other: string | null) => (s && other !== s ? colour : 'transparent');
       const style = {
         borderTopColor: edge(sub(r - 1, c)),
@@ -73,12 +73,23 @@ export function DishGrid({
       </div>
       {windStow && (
         <div className="wind-overlay" aria-hidden="true">
-          <span>WIND STOW ENGAGED</span>
+          <span>Wind stow engaged</span>
         </div>
       )}
     </div>
   );
 }
+
+const STATUS_TEXT: Record<DishDTO['status'], string> = {
+  ok: 'In service',
+  scanning: 'Scanning',
+  warning: 'Warning',
+  fault: 'Fault',
+  stowed: 'Stowed',
+  disabled: 'Disabled',
+  offline: 'Offline',
+  unknown: 'Unknown',
+};
 
 export function DishLegend() {
   const items: DishDTO['status'][] = ['ok', 'scanning', 'warning', 'fault', 'stowed', 'disabled', 'offline', 'unknown'];
@@ -89,7 +100,7 @@ export function DishLegend() {
           <span className={`legend-swatch st-${s}`} aria-hidden="true">
             {DISH_ICON[s]}
           </span>
-          {s}
+          {STATUS_TEXT[s]}
         </li>
       ))}
     </ul>

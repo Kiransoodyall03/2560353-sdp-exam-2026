@@ -22,7 +22,7 @@ export function ConfirmDialog({
   const expired = left <= 0;
 
   return (
-    <div className="modal-backdrop" role="presentation" onKeyDown={(e) => e.key === 'Escape' && onCancel()}>
+    <div className="modal-scrim" role="presentation" onKeyDown={(e) => e.key === 'Escape' && onCancel()}>
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="cf-title">
         <h2 id="cf-title">{confirm.title}</h2>
         <ul className="confirm-facts">
@@ -34,10 +34,10 @@ export function ConfirmDialog({
           {expired ? 'This confirmation has expired: send the command again to get a new one.' : `Expires in ${left} s.`}
         </p>
         <div className="row end">
-          <button type="button" onClick={onCancel} disabled={busy}>
+          <button type="button" className="arl-btn" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="button" className="primary" onClick={onConfirm} disabled={busy || expired}>
+          <button type="button" className="arl-btn arl-btn--primary" onClick={onConfirm} disabled={busy || expired}>
             {busy ? 'Sending…' : 'Confirm and send'}
           </button>
         </div>

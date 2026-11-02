@@ -9,8 +9,9 @@ import { EnergyFlow } from '../components/EnergyFlow';
 import { FuelGauge } from '../components/FuelGauge';
 import { GenerationChart } from '../components/GenerationChart';
 import { SocGauge } from '../components/SocGauge';
-import { Empty, ErrorBox, KpiTile, Loading, Panel, StatusPill } from '../components/ui';
+import { Empty, ErrorBox, KpiTile, Loading, Panel, SeverityBadge, StatusPill } from '../components/ui';
 import { api, errorText } from '../lib/api';
+import { useThemeColors, type ThemeColors } from '../lib/colors';
 import { fmtNum, fmtTime } from '../lib/format';
 import { kw, pct, useOpgLive, type OpgTrend } from '../lib/opg';
 
@@ -21,18 +22,25 @@ const WINDOWS = [
   { hours: 168, label: '7 d' },
 ];
 
-const POWER_SERIES: ChartSeries[] = [
-  { label: 'Solar', color: '#f0b429', fill: 'rgba(240, 180, 41, 0.15)' },
-  { label: 'Diesel', color: '#e05c5c' },
-  { label: 'Load', color: '#94a3b8', dash: [4, 3] },
-  { label: 'Battery (+ charging)', color: '#4cc9f0' },
-];
+// The tank runs dry at 2 % of capacity, which is what the generators need to start.
+const FUEL_START_LIMIT_PCT = 2;
+
+function powerSeries(c: ThemeColors): ChartSeries[] {
+  return [
+    { label: 'Solar', color: c.ochre },
+    { label: 'Diesel', color: c.dust },
+    { label: 'Load', color: c.inkMuted, dash: [4, 3] },
+    { label: 'Battery (charging above zero)', color: c.sunset },
+  ];
+}
 
 export function OpgPage() {
   const { plant, status } = useOpgLive();
   const [hours, setHours] = useState(6);
   const [trend, setTrend] = useState<OpgTrend | null>(null);
   const [trendError, setTrendError] = useState<string | null>(null);
+  const colours = useThemeColors();
+  const series = useMemo(() => powerSeries(colours), [colours]);
 
   useEffect(() => {
     let alive = true;
@@ -69,27 +77,31 @@ export function OpgPage() {
 
   return (
     <div className="page">
-      <h1>Power Grid</h1>
-      {status !== 'open' && <div className="flag warn">◆ Live stream {status}</div>}
+      <h1>Power</h1>
+      {status !== 'open' && (
+        <div className="flag warn">
+          <SeverityBadge severity="warning" compact /> Live stream {status}
+        </div>
+      )}
 
-      <div className="kpis wide">
-        <KpiTile kpi={{ label: 'Generation', value: plant.global.generationW == null ? null : Math.round(plant.global.generationW / 1000), unit: 'kW' }} />
-        <KpiTile kpi={{ label: 'Load', value: plant.global.loadW == null ? null : Math.round(plant.global.loadW / 1000), unit: 'kW' }} />
+      <div className="readings">
         <KpiTile
-          kpi={{
-            label: net == null ? 'Net' : net >= 0 ? 'Net charging' : 'Net discharging',
-            value: net == null ? null : Math.round(Math.abs(net) / 1000),
-            unit: 'kW',
-            status: net == null ? undefined : net >= 0 ? 'ok' : 'warn',
-          }}
+          kpi={{ label: 'Generation', value: plant.global.generationW == null ? null : Math.round(plant.global.generationW / 1000), unit: 'kW' }}
+          cause={
+            d.renewableFraction == null
+              ? 'Solar and diesel output summed at the bus.'
+              : `Solar provides ${Math.round(d.renewableFraction * 100)} % of the generation now.`
+          }
         />
         <KpiTile
-          kpi={{
-            label: 'Renewable share',
-            value: d.renewableFraction == null ? null : Math.round(d.renewableFraction * 100),
-            unit: '%',
-            status: d.renewableFraction == null ? undefined : d.renewableFraction > 0.6 ? 'ok' : d.renewableFraction > 0.2 ? 'warn' : 'bad',
-          }}
+          kpi={{ label: 'Load', value: plant.global.loadW == null ? null : Math.round(plant.global.loadW / 1000), unit: 'kW' }}
+          cause={
+            net == null
+              ? 'Demand from the habitat load.'
+              : net >= 0
+                ? `Batteries charge with the ${kw(net)} surplus.`
+                : `Batteries and diesel cover a ${kw(Math.abs(net))} deficit.`
+          }
         />
         <KpiTile
           kpi={{
@@ -98,6 +110,13 @@ export function OpgPage() {
             unit: '%',
             status: soc == null ? undefined : reserve != null && soc <= reserve ? 'bad' : soc < 30 ? 'warn' : 'ok',
           }}
+          fill={soc == null ? undefined : soc / 100}
+          limit={reserve == null ? undefined : { at: reserve / 100, label: `Reserve ${Math.round(reserve)} %` }}
+          cause={
+            reserve == null
+              ? `${fmtNum(d.storedKwh, 1)} kWh in the bank.`
+              : `Reserve is ${Math.round(reserve)} %; ${fmtNum(d.usableKwh, 1)} kWh stays usable above it.`
+          }
         />
         <KpiTile
           kpi={{
@@ -106,12 +125,20 @@ export function OpgPage() {
             unit: '%',
             status: plant.diesel.fuelPct == null ? undefined : plant.diesel.fuelPct < 2 ? 'bad' : plant.diesel.fuelPct < 25 ? 'warn' : 'ok',
           }}
+          fill={plant.diesel.fuelPct == null ? undefined : plant.diesel.fuelPct / 100}
+          limit={{ at: FUEL_START_LIMIT_PCT / 100, label: `Start limit ${FUEL_START_LIMIT_PCT} %` }}
+          cause={
+            d.dieselHoursLeftH == null
+              ? 'Diesel tank as a share of capacity.'
+              : `${fmtNum(d.fuelLitres, 0)} L left, about ${fmtNum(d.dieselHoursLeftH, 1)} h at the current burn.`
+          }
         />
       </div>
 
       {d.shortfall && (
         <div className="flag bad">
-          ◆ The load is not covered by solar, diesel and the usable battery energy ({kw(d.uncoveredW)} uncovered).
+          <SeverityBadge severity="critical" compact /> The load is not covered by solar, diesel and the usable battery energy
+          ({kw(d.uncoveredW)} uncovered).
         </div>
       )}
 
@@ -176,9 +203,9 @@ export function OpgPage() {
       <Panel
         title="Instantaneous power"
         actions={
-          <div className="row gap">
+          <div className="seg" role="group" aria-label="Window">
             {WINDOWS.map((w) => (
-              <button key={w.hours} type="button" className={hours === w.hours ? 'primary' : undefined} onClick={() => setHours(w.hours)}>
+              <button key={w.hours} type="button" className={hours === w.hours ? 'on' : ''} onClick={() => setHours(w.hours)}>
                 {w.label}
               </button>
             ))}
@@ -186,7 +213,7 @@ export function OpgPage() {
         }
       >
         {power ? (
-          <Chart ts={power.ts} values={power.values} series={POWER_SERIES} axes={[{ scale: 'y', label: 'kW' }]} height={220} />
+          <Chart ts={power.ts} values={power.values} series={series} axes={[{ scale: 'y', label: 'kW' }]} height={220} />
         ) : (
           <Loading what="power history" />
         )}
@@ -238,7 +265,7 @@ export function OpgPage() {
               </div>
               <div>
                 <dt>Array state</dt>
-                <dd>{plant.solar.enabled === false ? 'disabled' : 'enabled'}</dd>
+                <dd>{plant.solar.enabled === false ? 'Disabled' : 'Enabled'}</dd>
               </div>
             </dl>
           )}
@@ -309,7 +336,7 @@ export function OpgPage() {
           </div>
           <div>
             <dt>Load shedding</dt>
-            <dd>{plant.global.loadShed == null ? '—' : plant.global.loadShed ? 'on' : 'off'}</dd>
+            <dd>{plant.global.loadShed == null ? '—' : plant.global.loadShed ? 'On' : 'Off'}</dd>
           </div>
           <div>
             <dt>Supply mode</dt>
@@ -333,9 +360,9 @@ export function OpgPage() {
             <tbody>
               {(trend?.refuels ?? plant.refuels).slice(-20).reverse().map((r) => (
                 <tr key={r.ts}>
-                  <td className="mono">{fmtTime(r.ts)}</td>
-                  <td>{r.litres == null ? '—' : fmtNum(r.litres, 0)}</td>
-                  <td>{r.fuelPct == null ? '—' : `${fmtNum(r.fuelPct, 0)} %`}</td>
+                  <td className="arl-num">{fmtTime(r.ts)}</td>
+                  <td className="arl-num">{r.litres == null ? '—' : fmtNum(r.litres, 0)}</td>
+                  <td className="arl-num">{r.fuelPct == null ? '—' : `${fmtNum(r.fuelPct, 0)} %`}</td>
                 </tr>
               ))}
             </tbody>

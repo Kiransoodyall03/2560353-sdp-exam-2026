@@ -4,25 +4,8 @@
 // the interpolation looks continuous. Works identically in replay: the page passes a historical ts and the
 // server returns whatever samples were latest then.
 import { useEffect, useRef } from 'react';
+import { cssVar, rampAt, rgbCss, sequentialStops, useThemeColors } from '../../lib/colors';
 import type { GridBounds, IdwGrid, LwmMapDTO } from '../../lib/lwm';
-
-/** Viridis-like sequential ramp; t is 0..1. */
-const STOPS: [number, number, number][] = [
-  [68, 1, 84],
-  [59, 82, 139],
-  [33, 145, 140],
-  [94, 201, 98],
-  [253, 231, 37],
-];
-
-function ramp(t: number): [number, number, number] {
-  const x = Math.min(1, Math.max(0, t)) * (STOPS.length - 1);
-  const i = Math.min(STOPS.length - 2, Math.floor(x));
-  const f = x - i;
-  const a = STOPS[i]!;
-  const b = STOPS[i + 1]!;
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
-}
 
 const KM_PER_DEG_LAT = 110.574;
 
@@ -76,27 +59,29 @@ export function WeatherMap({
   label: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const c = useThemeColors();
 
   useEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    const ctx = c.getContext('2d');
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
     if (!map || !map.grid || map.grid.values.length === 0) {
-      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       return;
     }
     const grid: IdwGrid = map.grid;
     const bounds = map.bounds;
     const heightPx = heightFor(bounds, width);
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    c.width = Math.round(width * dpr);
-    c.height = Math.round(heightPx * dpr);
-    c.style.width = `${width}px`;
-    c.style.height = `${heightPx}px`;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(heightPx * dpr);
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${heightPx}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, heightPx);
-    ctx.fillStyle = '#0b0f14';
+    const stops = sequentialStops(c);
+    ctx.fillStyle = c.surfaceSunken;
     ctx.fillRect(0, 0, width, heightPx);
 
     // --- field: render the grid 1px-per-cell offscreen, then scale up with bilinear smoothing
@@ -116,7 +101,7 @@ export function WeatherMap({
           img.data[o + 3] = 0;
           continue;
         }
-        const [r, g, b] = ramp((v - lo) / span);
+        const [r, g, b] = rampAt(stops, (v - lo) / span);
         img.data[o] = r;
         img.data[o + 1] = g;
         img.data[o + 2] = b;
@@ -132,45 +117,52 @@ export function WeatherMap({
 
     // --- campus outline on top of the field
     if (geojson) {
-      ctx.strokeStyle = 'rgba(223, 230, 238, 0.75)';
+      ctx.strokeStyle = c.lineStrong;
       ctx.lineWidth = 1.25;
       const gj = geojson as { features?: { geometry?: { coordinates?: unknown } }[]; coordinates?: unknown };
       if (Array.isArray(gj.features)) for (const f of gj.features) strokeGeo(ctx, f.geometry?.coordinates, project);
       else strokeGeo(ctx, gj.coordinates, project);
     }
 
-    // --- site markers with their exact reading
-    ctx.font = '10px system-ui, sans-serif';
+    // --- site markers with their exact reading; neutral unless the reading is missing
+    ctx.font = `10px ${cssVar('--font-data') || 'sans-serif'}`;
     ctx.textAlign = 'center';
     for (const s of grid.sites) {
       if (!Number.isFinite(s.lat) || !Number.isFinite(s.lon)) continue;
       const [x, y] = project(s.lon, s.lat);
       ctx.beginPath();
       ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = s.value == null ? '#6b7787' : '#0d1117';
+      ctx.fillStyle = s.value == null ? c.stale : c.ink;
       ctx.fill();
-      ctx.strokeStyle = '#dfe6ee';
+      ctx.strokeStyle = c.surfacePage;
       ctx.lineWidth = 1.5;
       ctx.stroke();
-      ctx.fillStyle = '#dfe6ee';
-      ctx.strokeStyle = 'rgba(13, 17, 23, 0.9)';
+      ctx.fillStyle = c.ink;
+      ctx.strokeStyle = c.surfacePage;
       ctx.lineWidth = 3;
       const text = `${s.id} ${s.value == null ? '—' : Math.round(s.value)}`;
       ctx.strokeText(text, x, y - 7);
       ctx.fillText(text, x, y - 7);
     }
-  }, [map, geojson, width]);
+  }, [map, geojson, width, c]);
 
-  const legendStops = STOPS.map((s, i) => `${`rgb(${s[0]},${s[1]},${s[2]})`} ${(i / (STOPS.length - 1)) * 100}%`).join(', ');
+  const legendStops = sequentialStops(c)
+    .map((s, i, all) => `${rgbCss(s)} ${(i / (all.length - 1)) * 100}%`)
+    .join(', ');
 
   return (
     <div className="weather-map">
-      <canvas ref={ref} role="img" aria-label={label} style={{ maxWidth: '100%', height: 'auto', borderRadius: 6, border: '1px solid var(--line)' }} />
+      <canvas
+        ref={ref}
+        role="img"
+        aria-label={label}
+        style={{ maxWidth: '100%', height: 'auto', borderRadius: 0, border: '1px solid var(--line)' }}
+      />
       {map && map.min != null && map.max != null && (
         <div className="map-legend">
-          <span className="mono">{map.min.toFixed(1)}</span>
+          <span className="arl-num">{map.min.toFixed(1)}</span>
           <span className="map-ramp" style={{ background: `linear-gradient(90deg, ${legendStops})` }} aria-hidden="true" />
-          <span className="mono">{map.max.toFixed(1)}</span>
+          <span className="arl-num">{map.max.toFixed(1)}</span>
           <span className="muted small">{map.unit}</span>
         </div>
       )}

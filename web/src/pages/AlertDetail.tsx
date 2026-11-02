@@ -4,10 +4,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { AlertDetailDTO, AlertDTO } from '../../../shared/types';
 import { alertHref, EntityLink } from '../components/EntityLink';
+import { commandLabel } from '../components/CommandProgress';
 import { Empty, ErrorBox, Loading, Panel, SeverityBadge, StatusPill } from '../components/ui';
 import { useResearcherAction } from '../lib/actions';
 import { api, errorText } from '../lib/api';
 import { fmtAny, fmtTs } from '../lib/format';
+import { OP_TEXT, SERVICE_TEXT, SEVERITY_TEXT, SVC_TEXT } from '../lib/labels';
 import { useLive } from '../lib/live';
 import { valueVsLimit } from './Annunciator';
 
@@ -65,7 +67,7 @@ export function AlertDetailPage() {
         <Panel title="Alert">
           <dl className="dl">
             <dt>Service</dt>
-            <dd>{a.service.toUpperCase()}</dd>
+            <dd>{SERVICE_TEXT[a.service]}</dd>
             <dt>Entity</dt>
             <dd>
               <EntityLink alert={a} />
@@ -76,16 +78,18 @@ export function AlertDetailPage() {
             <dd className="mono">{valueVsLimit(a)}</dd>
             <dt>Severity</dt>
             <dd>
-              {a.severity}
-              {a.maxSeverity !== a.severity && <span className="muted"> (peak {a.maxSeverity})</span>}
+              <SeverityBadge severity={a.severity} />
+              {a.maxSeverity !== a.severity && <span className="muted"> reached {SEVERITY_TEXT[a.maxSeverity]}</span>}
             </dd>
             <dt>Condition</dt>
             <dd>
-              <StatusPill tone={a.svcState === 'raised' ? 'warn' : 'idle'}>{a.svcState}</StatusPill>
+              <StatusPill tone={a.svcState === 'raised' ? 'warn' : 'idle'}>{SVC_TEXT[a.svcState] ?? a.svcState}</StatusPill>
             </dd>
             <dt>Workflow</dt>
             <dd>
-              <StatusPill tone={a.opState === 'unacked' ? 'bad' : a.opState === 'acked' ? 'warn' : 'ok'}>{a.opState}</StatusPill>
+              <StatusPill tone={a.opState === 'unacked' ? 'bad' : a.opState === 'acked' ? 'warn' : 'ok'}>
+                {OP_TEXT[a.opState] ?? a.opState}
+              </StatusPill>
             </dd>
             <dt>Raised</dt>
             <dd className="mono">{fmtTs(a.raisedTs)}</dd>
@@ -152,7 +156,7 @@ export function AlertDetailPage() {
                     <td className="mono">{c.entity}</td>
                     <td>{c.control}</td>
                     <td className="mono">{fmtAny(c.value)}</td>
-                    <td>{c.state}</td>
+                    <td>{commandLabel(c.state)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -247,7 +251,7 @@ function WorkflowPanel({ alert: a, onDone }: { alert: AlertDTO; onDone: () => vo
             <span>Note (optional)</span>
             <textarea rows={2} maxLength={2000} value={ackNote} onChange={(e) => setAckNote(e.target.value)} />
           </label>
-          <button type="submit" className="primary" disabled={action.busy}>
+          <button type="submit" className="arl-btn arl-btn--primary" disabled={action.busy}>
             Acknowledge
           </button>
         </form>
@@ -265,9 +269,11 @@ function WorkflowPanel({ alert: a, onDone }: { alert: AlertDTO; onDone: () => vo
             <textarea rows={3} maxLength={2000} value={resNote} onChange={(e) => setResNote(e.target.value)} required />
           </label>
           {a.svcState === 'raised' && (
-            <p className="sev-warning small">◆ The service still reports this condition as raised.</p>
+            <p className="sev-warning small">
+              <SeverityBadge severity="warning" compact /> The service still reports this condition as raised.
+            </p>
           )}
-          <button type="submit" className="primary" disabled={action.busy}>
+          <button type="submit" className="arl-btn arl-btn--primary" disabled={action.busy}>
             Resolve
           </button>
         </form>

@@ -6,10 +6,13 @@ import { ReferenceImage, ScanCanvas, type Palette } from '../components/ScanCanv
 import { Empty, ErrorBox, Loading, Panel, StatusPill, type Tone } from '../components/ui';
 import { api, errorText } from '../lib/api';
 import { fmtDuration, fmtTs } from '../lib/format';
+import { SCAN_STATUS_TEXT } from '../lib/labels';
 import { referenceUrl } from '../lib/rta';
 import { useReferenceCorrelation, useServerImage, type ImageMode } from '../lib/scan';
 
 const STATUS_TONE: Record<string, Tone> = { running: 'ok', paused: 'warn', completed: 'info', cancelled: 'idle', failed: 'bad', unknown: 'idle' };
+const MODE_TEXT: Record<ImageMode, string> = { clean: 'Clean', raw: 'Raw' };
+const PALETTE_TEXT: Record<Palette, string> = { gray: 'Grey', inferno: 'Inferno' };
 
 export function ScanTable({
   scans,
@@ -25,11 +28,11 @@ export function ScanTable({
   if (scans.length === 0) return <Empty>No scans recorded yet.</Empty>;
   return (
     <div className="table-wrap">
-      <table className="table">
+      <table className="table table--dense">
         <thead>
           <tr>
             {selectable && <th aria-label="Compare" />}
-            <th>Started (SAST)</th>
+            <th>Started</th>
             <th>Scan</th>
             <th>Sub-array</th>
             <th>Target</th>
@@ -67,7 +70,7 @@ export function ScanTable({
               </td>
               <td>{s.band ?? '—'}</td>
               <td>
-                <StatusPill tone={STATUS_TONE[s.status] ?? 'idle'}>{s.status}</StatusPill>
+                <StatusPill tone={STATUS_TONE[s.status] ?? 'idle'}>{SCAN_STATUS_TEXT[s.status] ?? s.status}</StatusPill>
                 {s.reason && <span className="muted small"> {s.reason}</span>}
               </td>
               <td className="mono">{s.samples.toLocaleString()}</td>
@@ -79,7 +82,7 @@ export function ScanTable({
                     ? `ETA ${fmtDuration(s.etaS * 1000)}`
                     : '—'}
               </td>
-              <td>{s.hasImage ? '✓ stored' : s.status === 'running' ? 'live' : '—'}</td>
+              <td>{s.hasImage ? 'Stored image' : s.status === 'running' ? 'Live image' : '—'}</td>
             </tr>
           ))}
         </tbody>
@@ -124,7 +127,7 @@ export function ScansPage() {
   return (
     <div className="page">
       <p>
-        <Link to="/rta">← Radio Telescope Array</Link>
+        <Link to="/rta">← Radio telescope</Link>
       </p>
       <h1>Scan library</h1>
       {error && <ErrorBox>{error}</ErrorBox>}
@@ -144,7 +147,8 @@ export function ScansPage() {
           <option value="K">K</option>
         </select>
         <button
-          className="primary"
+          type="button"
+          className="arl-btn arl-btn--primary"
           disabled={selected.size < 2}
           onClick={() => nav(`/rta/compare?ids=${[...selected].map(encodeURIComponent).join(',')}`)}
         >
@@ -172,15 +176,15 @@ export function ComparePage() {
       <div className="filters">
         <div className="seg" role="group" aria-label="Image">
           {(['clean', 'raw'] as const).map((m) => (
-            <button key={m} className={mode === m ? 'on' : ''} onClick={() => setMode(m)}>
-              {m}
+            <button key={m} type="button" className={mode === m ? 'on' : ''} onClick={() => setMode(m)}>
+              {MODE_TEXT[m]}
             </button>
           ))}
         </div>
         <div className="seg" role="group" aria-label="Palette">
           {(['gray', 'inferno'] as const).map((p) => (
-            <button key={p} className={palette === p ? 'on' : ''} onClick={() => setPalette(p)}>
-              {p}
+            <button key={p} type="button" className={palette === p ? 'on' : ''} onClick={() => setPalette(p)}>
+              {PALETTE_TEXT[p]}
             </button>
           ))}
         </div>
@@ -218,7 +222,8 @@ function CompareColumn({ id, mode, palette, showRef }: { id: string; mode: Image
   return (
     <Panel title={<Link to={`/rta/scans/${id}`}>{id}</Link>}>
       <div className="muted small">
-        {scan.targetName ?? scan.targetId ?? 'custom'} · {scan.band ?? '?'} band · {fmtTs(scan.startedTs)} · {scan.status}
+        {scan.targetName ?? scan.targetId ?? 'Custom target'} · {scan.band ?? '?'} band · {fmtTs(scan.startedTs)} ·{' '}
+        {SCAN_STATUS_TEXT[scan.status] ?? scan.status}
       </div>
       {imgError ? <ErrorBox>{imgError}</ErrorBox> : <ScanCanvas image={image} palette={palette} size={300} label={`${id} ${mode} image`} />}
       {showRef && (

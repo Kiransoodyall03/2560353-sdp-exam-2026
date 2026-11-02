@@ -5,9 +5,9 @@ import type { OpgBucket } from '../lib/opg';
 
 const H = 170;
 const SERIES = [
-  { key: 'solarKwh', label: 'Solar', colour: '#f0b429' },
-  { key: 'batteryOutKwh', label: 'Battery', colour: '#4cc9f0' },
-  { key: 'dieselKwh', label: 'Diesel', colour: '#e05c5c' },
+  { key: 'solarKwh', label: 'Solar', colour: 'var(--ochre)' },
+  { key: 'batteryOutKwh', label: 'Battery', colour: 'var(--sunset)' },
+  { key: 'dieselKwh', label: 'Diesel', colour: 'var(--dust)' },
 ] as const;
 
 export function GenerationChart({ buckets, mode }: { buckets: OpgBucket[]; mode: 'hour' | 'day' }) {

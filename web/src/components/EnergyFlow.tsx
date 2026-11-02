@@ -2,6 +2,7 @@
 // thickness and the arrow direction are the whole point, so a discharging battery reads as a source.
 import type { OpgPlant } from '../lib/opg';
 import { kw } from '../lib/opg';
+import { SeverityBadge } from './ui';
 
 const BUS_X = 320;
 const BOX_W = 180;
@@ -11,7 +12,12 @@ const LOAD_X = 420;
 const Y = { solar: 24, battery: 121, diesel: 218, load: 121 };
 const CENTRE = (top: number) => top + BOX_H / 2;
 
-const COLOUR = { solar: '#f0b429', battery: '#4cc9f0', diesel: '#e05c5c', load: '#94a3b8' };
+const COLOUR = {
+  solar: 'var(--ochre)',
+  battery: 'var(--sunset)',
+  diesel: 'var(--dust)',
+  load: 'var(--ink)',
+};
 
 /** 1 px per 60 kW, clamped so a trickle is still visible and 800 kW does not swallow the drawing. */
 const widthOf = (w: number | null) => Math.max(2, Math.min(13, Math.round(Math.abs(w ?? 0) / 60_000)));
@@ -23,7 +29,6 @@ function Flow({ from, to, w, colour, id }: { from: [number, number]; to: [number
       d={`M ${from[0]} ${from[1]} L ${to[0]} ${to[1]}`}
       stroke={colour}
       strokeWidth={widthOf(w)}
-      strokeLinecap="round"
       opacity={active ? 0.9 : 0.18}
       markerEnd={active ? `url(#${id})` : undefined}
       strokeDasharray={active ? undefined : '4 4'}
@@ -38,6 +43,8 @@ export function EnergyFlow({ plant }: { plant: OpgPlant }) {
   const load = plant.global.loadW;
   const charging = (battery ?? 0) > 0;
   const discharging = (battery ?? 0) < 0;
+  // a load that the plant cannot cover is the one abnormal state this drawing can show
+  const loadColour = plant.derived.shortfall ? 'var(--alarm-critical)' : COLOUR.load;
 
   return (
     <div className="flow">
@@ -45,20 +52,20 @@ export function EnergyFlow({ plant }: { plant: OpgPlant }) {
         <defs>
           {(['solar', 'battery', 'diesel', 'load'] as const).map((k) => (
             <marker key={k} id={`arrow-${k}`} markerWidth="6" markerHeight="6" refX="4.5" refY="3" orient="auto">
-              <path d="M0,0 L6,3 L0,6 z" fill={COLOUR[k]} />
+              <path d="M0,0 L6,3 L0,6 z" fill={k === 'load' ? loadColour : COLOUR[k]} />
             </marker>
           ))}
         </defs>
 
         {/* bus */}
-        <line x1={BUS_X} x2={BUS_X} y1={CENTRE(Y.solar)} y2={CENTRE(Y.diesel)} stroke="#3a4553" strokeWidth={5} strokeLinecap="round" />
+        <line x1={BUS_X} x2={BUS_X} y1={CENTRE(Y.solar)} y2={CENTRE(Y.diesel)} stroke="var(--ink-muted)" strokeWidth={5} />
         <text x={BUS_X} y={291} className="flow-bus-label" textAnchor="middle">
           plant bus
         </text>
 
         {/* solar */}
         <g>
-          <rect x={LEFT_X} y={Y.solar} width={BOX_W} height={BOX_H} rx={6} className="flow-box" stroke={COLOUR.solar} />
+          <rect x={LEFT_X} y={Y.solar} width={BOX_W} height={BOX_H} rx={0} className="flow-box" stroke={COLOUR.solar} />
           <text x={LEFT_X + 12} y={Y.solar + 22} className="flow-name">
             Solar array
           </text>
@@ -73,7 +80,7 @@ export function EnergyFlow({ plant }: { plant: OpgPlant }) {
 
         {/* battery: the arrow points at the bus while it discharges, at the bank while it charges */}
         <g>
-          <rect x={LEFT_X} y={Y.battery} width={BOX_W} height={BOX_H} rx={6} className="flow-box" stroke={COLOUR.battery} />
+          <rect x={LEFT_X} y={Y.battery} width={BOX_W} height={BOX_H} rx={0} className="flow-box" stroke={COLOUR.battery} />
           <text x={LEFT_X + 12} y={Y.battery + 22} className="flow-name">
             Battery bank
           </text>
@@ -92,7 +99,7 @@ export function EnergyFlow({ plant }: { plant: OpgPlant }) {
 
         {/* diesel */}
         <g>
-          <rect x={LEFT_X} y={Y.diesel} width={BOX_W} height={BOX_H} rx={6} className="flow-box" stroke={COLOUR.diesel} />
+          <rect x={LEFT_X} y={Y.diesel} width={BOX_W} height={BOX_H} rx={0} className="flow-box" stroke={COLOUR.diesel} />
           <text x={LEFT_X + 12} y={Y.diesel + 22} className="flow-name">
             Generators
           </text>
@@ -107,7 +114,7 @@ export function EnergyFlow({ plant }: { plant: OpgPlant }) {
 
         {/* load */}
         <g>
-          <rect x={LOAD_X} y={Y.load} width={BOX_W} height={BOX_H} rx={6} className="flow-box" stroke={COLOUR.load} />
+          <rect x={LOAD_X} y={Y.load} width={BOX_W} height={BOX_H} rx={0} className="flow-box" stroke={loadColour} />
           <text x={LOAD_X + 12} y={Y.load + 22} className="flow-name">
             Habitat load
           </text>
@@ -117,9 +124,10 @@ export function EnergyFlow({ plant }: { plant: OpgPlant }) {
           <text x={LOAD_X + BOX_W - 12} y={Y.load + 22} className="flow-tag" textAnchor="end">
             {plant.global.supplyMode ?? '—'}
           </text>
-          <Flow from={[BUS_X, CENTRE(Y.load)]} to={[LOAD_X, CENTRE(Y.load)]} w={load} colour={COLOUR.load} id="arrow-load" />
+          <Flow from={[BUS_X, CENTRE(Y.load)]} to={[LOAD_X, CENTRE(Y.load)]} w={load} colour={loadColour} id="arrow-load" />
         </g>
       </svg>
+      {plant.derived.shortfall && <SeverityBadge severity="warning">Load not covered</SeverityBadge>}
       <p className="muted small">
         Solar {kw(solar)} · batteries {kw(Math.abs(battery ?? 0))} {charging ? 'charging' : discharging ? 'discharging' : 'idle'} · diesel{' '}
         {kw(diesel)} · load {kw(load)}. Connector width is 60 kW per pixel.

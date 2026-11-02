@@ -16,12 +16,12 @@ const TONE: Record<string, Tone> = {
 };
 
 const LABEL: Record<string, string> = {
-  pending: 'pending',
-  accepted: 'accepted',
-  in_progress: 'in progress',
-  completed: 'completed',
-  failed: 'failed',
-  rejected: 'rejected',
+  pending: 'Pending',
+  accepted: 'Accepted',
+  in_progress: 'In progress',
+  completed: 'Completed',
+  failed: 'Failed',
+  rejected: 'Rejected',
 };
 
 export function commandTone(state: string): Tone {

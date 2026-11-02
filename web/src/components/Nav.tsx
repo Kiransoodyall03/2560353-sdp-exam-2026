@@ -1,26 +1,29 @@
 import { NavLink } from 'react-router-dom';
 import type { ServiceId } from '../../../shared/types';
-import { fmtTs } from '../lib/format';
 import { useLive } from '../lib/live';
 import { useResearcher } from '../lib/researcher';
+import { useTheme } from '../lib/theme';
+import { SeverityBadge } from './ui';
 
 const LINKS: { to: string; label: string; svc?: ServiceId; end?: boolean }[] = [
   { to: '/', label: 'Overview', end: true },
-  { to: '/rta', label: 'Radio Telescope', svc: 'rta' },
+  { to: '/rta', label: 'Radio telescope', svc: 'rta' },
   { to: '/lwm', label: 'Weather', svc: 'lwm' },
-  { to: '/opg', label: 'Power Grid', svc: 'opg' },
+  { to: '/opg', label: 'Power', svc: 'opg' },
   { to: '/alerts', label: 'Annunciator' },
   { to: '/replay', label: 'Replay' },
 ];
 
 export function Nav() {
-  const { overview, summary, simNow } = useLive();
+  const { overview, summary } = useLive();
   const { name, code, signOut } = useResearcher();
+  const { theme, toggle } = useTheme();
+
   return (
     <aside className="nav" aria-label="Main">
       <div className="brand">
         <span className="brand-mark" aria-hidden="true">
-          ◎
+          AR
         </span>
         <div>
           <div className="brand-title">ARL Control</div>
@@ -32,19 +35,22 @@ export function Nav() {
           {LINKS.map((l) => {
             const h = l.svc ? overview?.services.find((s) => s.health.service === l.svc)?.health : undefined;
             const unacked = l.svc ? summary?.byService[l.svc]?.unacked ?? 0 : l.to === '/alerts' ? sumUnacked(summary) : 0;
-            const online = h?.online;
+            const offline = h?.online === false;
             return (
               <li key={l.to}>
                 <NavLink to={l.to} end={l.end ?? false}>
-                  {l.svc && (
-                    <span
-                      className={`dot ${online === true ? 'tone-ok' : online === false ? 'tone-bad' : 'tone-idle'}`}
-                      title={online === true ? 'online' : online === false ? 'offline' : 'unknown'}
-                      aria-label={online === true ? 'online' : online === false ? 'offline' : 'state unknown'}
-                    />
-                  )}
+                  <span className="nav-mark" aria-hidden="true" />
                   <span className="nav-label">{l.label}</span>
-                  {unacked > 0 && <span className="nav-badge">{unacked}</span>}
+                  {offline && (
+                    <span title="Service offline">
+                      <SeverityBadge severity="critical" compact />
+                    </span>
+                  )}
+                  {unacked > 0 && (
+                    <span className="nav-badge" title={`${unacked} unacknowledged`}>
+                      {unacked}
+                    </span>
+                  )}
                 </NavLink>
               </li>
             );
@@ -52,13 +58,11 @@ export function Nav() {
         </ul>
       </nav>
       <div className="nav-foot">
-        <div className="muted small">Sim time (SAST)</div>
-        <div className="mono">{fmtTs(simNow)}</div>
         <div className="researcher">
           {code ? (
             <>
-              <span title="Verified researcher">◉ {name ?? 'researcher'}</span>
-              <button className="link" onClick={signOut}>
+              <span title="Verified researcher">{name ?? 'Researcher'}</span>
+              <button type="button" className="link" onClick={signOut}>
                 Sign out
               </button>
             </>
@@ -66,6 +70,14 @@ export function Nav() {
             <span className="muted small">No researcher signed in</span>
           )}
         </div>
+        <button
+          type="button"
+          className="nav-theme"
+          onClick={toggle}
+          title={`Switch to the ${theme === 'dark' ? 'light' : 'dark'} theme`}
+        >
+          {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+        </button>
       </div>
     </aside>
   );

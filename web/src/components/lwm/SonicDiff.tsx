@@ -3,7 +3,8 @@
 // recalibration the controls offer. The live delta comes from the server; the optional trend is aligned from
 // the site's history (sonic_temperature_k against the nearest weather temperature_k).
 import { Chart } from '../Chart';
-import { Empty } from '../ui';
+import { Empty, SeverityBadge } from '../ui';
+import { useThemeColors } from '../../lib/colors';
 import { deg, fmtNum } from '../../lib/format';
 import { fmtC, type SonicPoint } from '../../lib/lwm';
 
@@ -21,17 +22,22 @@ export function SonicDiff({
   deltaK: number | null;
   series?: { ts: number[]; deltaK: (number | null)[] } | null;
 }) {
+  const colours = useThemeColors();
   if (!sonic && deltaK == null && temperatureK == null) {
     return <Empty>No sonic anemometer data yet (lwm-3).</Empty>;
   }
-  const tone = deltaK == null ? 'idle' : Math.abs(deltaK) > DRIFT_WARN_K ? 'warn' : 'ok';
+  const drift = deltaK != null && Math.abs(deltaK) > DRIFT_WARN_K;
   const hasSeries = series && series.ts.length > 1;
 
   return (
     <div className="sonic-diff">
-      <div className={`delta-headline tone-${tone}`}>
-        <span className="delta-value">{deltaK == null ? '—' : `${deltaK > 0 ? '+' : deltaK < 0 ? '−' : ''}${Math.abs(deltaK).toFixed(2)}`}</span>
-        <span className="delta-unit">K sonic − main</span>
+      <div className="reading-head">
+        <span className="arl-label">Sonic minus main thermometer</span>
+        {drift && <SeverityBadge severity="warning">Drift</SeverityBadge>}
+      </div>
+      <div className="arl-reading">
+        {deltaK == null ? '—' : `${deltaK > 0 ? '+' : deltaK < 0 ? '−' : ''}${Math.abs(deltaK).toFixed(2)}`}
+        <small>K</small>
       </div>
       <dl className="facts">
         <div>
@@ -63,18 +69,18 @@ export function SonicDiff({
       </dl>
       {hasSeries ? (
         <>
-          <h3>Δ over time</h3>
+          <h3>Difference over time</h3>
           <Chart
             ts={series!.ts}
             values={[series!.deltaK]}
-            series={[{ label: 'sonic − main (K)', color: '#4cc9f0', width: 1.5 }]}
+            series={[{ label: 'Sonic minus main (K)', color: colours.sunset, width: 1.5 }]}
             axes={[{ scale: 'y', label: 'K' }]}
             height={150}
           />
         </>
       ) : (
         <p className="muted small">
-          {deltaK != null && Math.abs(deltaK) > DRIFT_WARN_K
+          {drift
             ? 'A gap this wide usually means the sonic temperature sensor has drifted: consider a recalibration when the wind is calm.'
             : 'A small, steady gap is normal; a widening one flags sensor drift.'}
         </p>

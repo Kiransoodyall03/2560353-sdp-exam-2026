@@ -167,7 +167,7 @@ function CodePrompt({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onKeyDown={(e) => e.key === 'Escape' && onDone(null, null)}>
+    <div className="modal-scrim" role="presentation" onKeyDown={(e) => e.key === 'Escape' && onDone(null, null)}>
       <form className="modal" role="dialog" aria-modal="true" aria-labelledby="rc-title" onSubmit={submit}>
         <h2 id="rc-title">Researcher code required</h2>
         <p className="muted">
@@ -193,10 +193,10 @@ function CodePrompt({
           </p>
         )}
         <div className="row end">
-          <button type="button" onClick={() => onDone(null, null)} disabled={busy}>
+          <button type="button" className="arl-btn" onClick={() => onDone(null, null)} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="primary" disabled={busy}>
+          <button type="submit" className="arl-btn arl-btn--primary" disabled={busy}>
             {busy ? 'Checking…' : 'Verify'}
           </button>
         </div>

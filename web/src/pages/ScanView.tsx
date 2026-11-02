@@ -8,6 +8,7 @@ import { ReferenceImage, ScanCanvas, type GridImage, type Palette } from '../com
 import { Empty, ErrorBox, Loading, Panel, StatusPill } from '../components/ui';
 import { api, errorText } from '../lib/api';
 import { fmtDuration, fmtNum, fmtTs } from '../lib/format';
+import { SCAN_STATUS_TEXT } from '../lib/labels';
 import { BAND_TEXT, referenceUrl } from '../lib/rta';
 import { scanImageToGrid, useReferenceCorrelation, useServerImage, type ImageMode } from '../lib/scan';
 import { useSse } from '../lib/sse';
@@ -61,21 +62,23 @@ export function ScanViewPage() {
       </p>
       <h1 className="row gap">
         <span className="mono">{scan.scanId}</span>
-        <StatusPill tone={live ? 'ok' : scan.status === 'failed' ? 'bad' : 'info'}>{scan.status}</StatusPill>
-        {live && <span className="live-dot">● LIVE</span>}
+        <StatusPill tone={live ? 'ok' : scan.status === 'failed' ? 'bad' : 'info'}>
+          {SCAN_STATUS_TEXT[scan.status] ?? scan.status}
+        </StatusPill>
+        {live && <span className="live-dot">Live</span>}
       </h1>
       <div className="filters">
         <div className="seg" role="group" aria-label="Image">
           {(['clean', 'raw'] as const).map((m) => (
-            <button key={m} className={mode === m ? 'on' : ''} onClick={() => setMode(m)}>
+            <button key={m} type="button" className={mode === m ? 'on' : ''} onClick={() => setMode(m)}>
               {m === 'clean' ? 'Cleaned' : 'Raw'}
             </button>
           ))}
         </div>
         <div className="seg" role="group" aria-label="Palette">
           {(['gray', 'inferno'] as const).map((p) => (
-            <button key={p} className={palette === p ? 'on' : ''} onClick={() => setPalette(p)}>
-              {p}
+            <button key={p} type="button" className={palette === p ? 'on' : ''} onClick={() => setPalette(p)}>
+              {p === 'gray' ? 'Grey' : 'Inferno'}
             </button>
           ))}
         </div>
@@ -115,8 +118,8 @@ export function ScanViewPage() {
           )}
           {showHoles && (
             <p className="small muted">
-              <span className="swatch" style={{ background: 'rgb(0,140,255)' }} /> no usable sample ·{' '}
-              <span className="swatch" style={{ background: 'rgb(0,200,255)' }} /> filled from neighbours
+              <span className="swatch" style={{ background: 'var(--alarm-warning)' }} /> no usable sample ·{' '}
+              <span className="swatch" style={{ background: 'var(--sunset)' }} /> filled from neighbours
             </p>
           )}
           <p className="small muted">North up, east left of centre offset (Δα increases to the right).</p>
@@ -141,7 +144,7 @@ export function ScanViewPage() {
             </dd>
             <dt>Target</dt>
             <dd>
-              {scan.targetName ?? scan.targetId ?? 'custom'}
+              {scan.targetName ?? scan.targetId ?? 'Custom target'}
               {scan.raRad != null && (
                 <span className="muted small">
                   {' '}

@@ -1,0 +1,26 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500&display=swap');
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --surface-page:#ffffff; --surface-panel:#f4f5f7; --surface-sunken:#e9ebef;
+  --chrome:#1c2430; --chrome-ink:#e7e9ed; --chrome-muted:#a9b1be; --chrome-accent:#e0703f;
+  --ink:#1a1f27; --ink-muted:#4f5765; --line:#d5d9df; --line-strong:#868d99;
+  --accent:#b8501f; --accent-hover:#9a4219; --accent-ink:#ffffff; --accent-subtle:#f7e6dd;
+  --sunset:#2d628c; --ochre:#8a6418; --dust:#c9b49a;
+  --alarm-critical:#94102f; --alarm-critical-ink:#ffffff; --alarm-warning:#f2c230; --alarm-warning-ink:#1a1f27;
+  --alarm-info:var(--sunset); --stale:#9aa1ac; --replay-frame:var(--ochre); --ramp-peak:#fdf6ee;
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-6:24px; --space-8:32px;
+  --radius-0:0; --radius-1:2px; --radius-2:4px;
+  --shadow-overlay:0 8px 24px rgba(15,17,20,0.28);
+  --font-ui:"Barlow","Segoe UI",system-ui,sans-serif;
+  --font-data:"Barlow Semi Condensed","Barlow","Segoe UI",system-ui,sans-serif;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-page:#17191e; --surface-panel:#1f2228; --surface-sunken:#121418;
+  --chrome:#0f1114; --chrome-ink:#e8e4de; --chrome-muted:#8e95a0;
+  --ink:#e8e4de; --ink-muted:#a7adb7; --line:#2e333b; --line-strong:#6e7581;
+  --accent:#e0703f; --accent-hover:#ec8656; --accent-ink:#17191e; --accent-subtle:#3a2418;
+  --sunset:#8dbbe0; --ochre:#d9a54a; --dust:#8c7a66;
+  --alarm-critical:#b3183f; --alarm-warning-ink:#17191e; --stale:#5a606a;
+}
+html, body { background:var(--surface-page); color:var(--ink); font-family:var(--font-ui); font-size:14px; line-height:20px; }

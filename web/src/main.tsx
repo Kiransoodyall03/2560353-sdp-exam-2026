@@ -4,19 +4,24 @@ import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
 import { LiveProvider } from './lib/live';
 import { ResearcherProvider } from './lib/researcher';
+import { ThemeProvider } from './lib/theme';
 import { CommandsProvider } from './state/CommandsContext';
+import './styles/tokens.css';
+import './styles/components.css';
 import './styles.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <ResearcherProvider>
-        <CommandsProvider>
-          <LiveProvider>
-            <App />
-          </LiveProvider>
-        </CommandsProvider>
-      </ResearcherProvider>
+      <ThemeProvider>
+        <ResearcherProvider>
+          <CommandsProvider>
+            <LiveProvider>
+              <App />
+            </LiveProvider>
+          </CommandsProvider>
+        </ResearcherProvider>
+      </ThemeProvider>
     </BrowserRouter>
   </StrictMode>,
 );

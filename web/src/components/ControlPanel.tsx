@@ -157,7 +157,7 @@ export function ControlPanel({
             <div className="row gap">
               <button
                 type="button"
-                className={spec.ui.danger ? 'danger-button' : 'primary'}
+                className={spec.ui.danger ? 'arl-btn arl-btn--danger' : 'arl-btn'}
                 onClick={() => void submit(spec)}
                 disabled={busy !== null || !isReady(spec, valueOf(spec))}
               >
@@ -228,7 +228,14 @@ export function Presets({ service }: { service: ServiceId }) {
       {list.length === 0 && <p className="muted small">This service has no presets.</p>}
       <div className="row gap">
         {list.map((p) => (
-          <button key={p.id} type="button" onClick={() => void run(p.id)} disabled={busy !== null} title={p.description}>
+          <button
+            key={p.id}
+            type="button"
+            className="arl-btn"
+            onClick={() => void run(p.id)}
+            disabled={busy !== null}
+            title={p.description}
+          >
             {busy === p.id ? 'Running…' : p.name}
           </button>
         ))}
@@ -238,7 +245,7 @@ export function Presets({ service }: { service: ServiceId }) {
         <ul className="preset-result small">
           {result.rows.map((r, i) => (
             <li key={`${r.control}-${i}`} className={r.ok ? 'tone-ok' : 'tone-bad'}>
-              <span className="mono">{r.control}</span> {r.ok ? 'sent' : (r.detail ?? 'refused')}
+              <span className="mono">{r.control}</span> {r.ok ? 'Sent' : (r.detail ?? 'Refused')}
             </li>
           ))}
         </ul>

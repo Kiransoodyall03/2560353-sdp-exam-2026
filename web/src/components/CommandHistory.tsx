@@ -74,8 +74,8 @@ export function CommandHistory({
 }
 
 function fmtValue(value: unknown): string {
-  if (value === true) return 'yes';
-  if (value === false) return 'no';
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
   if (value == null) return '—';
   if (typeof value === 'number') return Number.isInteger(value) ? String(value) : String(Math.round(value * 1000) / 1000);
   if (typeof value === 'object') {

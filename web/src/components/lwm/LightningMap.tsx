@@ -2,6 +2,7 @@
 // Range rings mark the lightning.max_km (danger) and storm.approach_km (watch) alert limits, so "is the
 // storm inside the safe radius" is a glance. Newer strikes are brighter; the nearest one is ringed. The
 // strike list and the derived nearest/approach numbers come from the server.
+import { SeverityBadge } from '../ui';
 import { compassFromRad, type LightningDerived, type LwmLimits, type LwmStrike } from '../../lib/lwm';
 
 const SIZE = 300;
@@ -52,47 +53,40 @@ export function LightningMap({
           );
         })}
         {/* alert-limit rings */}
-        {rings.map((km, i) => (
+        {rings.map((km) => (
           <g key={`ring-${km}`}>
             <circle
               cx={CX}
               cy={CY}
               r={rOf(km)}
               fill="none"
-              stroke={i === 0 ? 'var(--bad)' : 'var(--warn)'}
-              strokeWidth={1.25}
+              stroke="var(--line-strong)"
+              strokeWidth={1}
               strokeDasharray="4 4"
-              opacity={0.8}
             />
-            <text x={CX + 3} y={CY - rOf(km) - 3} className="ring-label" fill={i === 0 ? 'var(--bad)' : 'var(--warn)'}>
+            <text x={CX + 3} y={CY - rOf(km) - 3} className="ring-label" fill="var(--ink-muted)">
               {km} km
             </text>
           </g>
         ))}
-        {/* strikes */}
+        {/* strikes: ochre, fading with age */}
         {strikes.map((s, i) => {
           if (s.distanceKm == null || s.bearingRad == null) return null;
           const deg = ((s.bearingRad * 180) / Math.PI + 360) % 360;
           const [x, y] = polar(deg, rOf(s.distanceKm));
           const isNearest = nearestKm != null && Math.abs(s.distanceKm - nearestKm) < 1e-6;
-          const op = 0.35 + 0.65 * ageFrac(s.ts);
+          const op = 0.3 + 0.7 * ageFrac(s.ts);
           return (
             <g key={`${s.ts}-${i}`}>
-              {isNearest && <circle cx={x} cy={y} r={7} fill="none" stroke="var(--bad)" strokeWidth={1.5} />}
-              <circle
-                cx={x}
-                cy={y}
-                r={isNearest ? 4 : 3}
-                fill={s.distanceKm <= limits.lightningMaxKm ? 'var(--bad)' : 'var(--warn)'}
-                opacity={op}
-              >
+              {isNearest && <circle cx={x} cy={y} r={7} fill="none" stroke="var(--ink)" strokeWidth={1.5} />}
+              <circle cx={x} cy={y} r={isNearest ? 4 : 3} fill="var(--ochre)" opacity={op}>
                 <title>{`${s.distanceKm.toFixed(1)} km ${compassFromRad(s.bearingRad) ?? ''} · ${s.detectedBy.join(', ') || 'network'}`}</title>
               </circle>
             </g>
           );
         })}
         {/* ARL centre */}
-        <circle cx={CX} cy={CY} r={3.5} fill="var(--accent)" />
+        <circle cx={CX} cy={CY} r={3.5} fill="var(--ink)" />
         <text x={CX} y={CY + 15} textAnchor="middle" className="centre-label">
           ARL
         </text>
@@ -104,21 +98,27 @@ export function LightningMap({
         </div>
         <div>
           <dt>Nearest</dt>
-          <dd className={derived?.withinMaxKm ? 'tone-bad' : undefined}>
+          <dd>
             {nearestKm == null ? '—' : `${nearestKm.toFixed(1)} km`}
             {derived?.bearingRad != null ? ` ${compassFromRad(derived.bearingRad) ?? ''}` : ''}
+            {derived?.withinMaxKm && (
+              <>
+                {' '}
+                <SeverityBadge severity="critical">Inside limit</SeverityBadge>
+              </>
+            )}
           </dd>
         </div>
         <div>
           <dt>Approach</dt>
-          <dd className={derived && derived.approachKmh != null && derived.approachKmh > 0 ? 'tone-warn' : undefined}>
+          <dd>
             {derived?.approachKmh == null
               ? '—'
               : derived.approachKmh > 0
                 ? `${derived.approachKmh.toFixed(0)} km/h closing`
                 : derived.approachKmh < 0
                   ? `${Math.abs(derived.approachKmh).toFixed(0)} km/h receding`
-                  : 'steady'}
+                  : 'Steady'}
           </dd>
         </div>
       </dl>

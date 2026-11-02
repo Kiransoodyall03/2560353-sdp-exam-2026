@@ -13,8 +13,9 @@ import { SiteCards } from '../components/lwm/SiteCards';
 import { SonicDiff } from '../components/lwm/SonicDiff';
 import { WeatherMap } from '../components/lwm/WeatherMap';
 import { WindRose } from '../components/lwm/WindRose';
-import { ErrorBox, KpiTile, Loading, Panel, StatusPill } from '../components/ui';
+import { ErrorBox, KpiTile, Loading, Panel, SeverityBadge, StatusPill } from '../components/ui';
 import { errorText } from '../lib/api';
+import { useThemeColors } from '../lib/colors';
 import { fmtNum, fmtTime } from '../lib/format';
 import {
   fetchLwmGeoJson,
@@ -37,6 +38,7 @@ const FALLBACK_VARIABLES = ['temperature_k', 'humidity_pct', 'pressure_hpa', 'wi
 
 export function LwmPage() {
   const { network, status } = useLwmLive();
+  const colours = useThemeColors();
 
   // map: variable + optional scrub time (null = follow the sim clock, so replay advances it)
   const [variable, setVariable] = useState('temperature_k');
@@ -168,6 +170,7 @@ export function LwmPage() {
   const strikesPerMin = network.global.strikesLastMin ?? light.strikesLast10Min;
 
   const nowTs = network.ts;
+  const gustAxis = Math.max(maxGust ?? 0, limits.highWindCritMs) * 1.2;
   const scrubMin = nowTs != null ? nowTs - hours * HOUR_MS : 0;
   const scrubMax = nowTs ?? 0;
   const scrubStep = nowTs != null ? Math.max(1000, Math.floor((scrubMax - scrubMin) / 400)) : 1000;
@@ -176,15 +179,23 @@ export function LwmPage() {
   return (
     <div className="page">
       <h1>Weather</h1>
-      {status !== 'open' && <div className="flag warn">◆ Live stream {status}</div>}
+      {status !== 'open' && (
+        <div className="flag warn">
+          <SeverityBadge severity="warning" compact /> Live stream {status}
+        </div>
+      )}
       {light.withinMaxKm && (
-        <div className="flag bad blink">
-          ▲ Lightning within {limits.lightningMaxKm} km ({light.nearestKm?.toFixed(1)} km): technician visits are blocked.
+        <div className="flag bad">
+          <SeverityBadge severity="critical" compact /> Lightning within {limits.lightningMaxKm} km (
+          {light.nearestKm?.toFixed(1)} km): technician visits are blocked.
         </div>
       )}
 
-      <div className="kpis wide">
-        <KpiTile kpi={{ label: 'Active sites', value: activeSites }} />
+      <div className="readings">
+        <KpiTile
+          kpi={{ label: 'Active sites', value: activeSites, unit: `of ${network.sites.length}` }}
+          cause={meanTempC == null ? 'Sites reporting to the network now.' : `Mean temperature ${fmtNum(meanTempC, 1)} °C.`}
+        />
         <KpiTile
           kpi={{
             label: 'Max gust',
@@ -192,9 +203,10 @@ export function LwmPage() {
             unit: 'm/s',
             status: maxGust == null ? undefined : maxGust > limits.highWindCritMs ? 'bad' : maxGust > limits.highWindWarnMs ? 'warn' : 'ok',
           }}
+          fill={maxGust == null ? undefined : maxGust / gustAxis}
+          limit={{ at: limits.highWindCritMs / gustAxis, label: `Critical ${limits.highWindCritMs} m/s` }}
+          cause={`Wind stow starts at ${limits.highWindWarnMs} m/s and the array is critical above ${limits.highWindCritMs} m/s.`}
         />
-        <KpiTile kpi={{ label: 'Mean temp', value: meanTempC == null ? null : Math.round(meanTempC * 10) / 10, unit: '°C' }} />
-        <KpiTile kpi={{ label: 'Strikes/min', value: strikesPerMin, status: strikesPerMin > 0 ? 'warn' : 'ok' }} />
         <KpiTile
           kpi={{
             label: 'Nearest strike',
@@ -202,6 +214,19 @@ export function LwmPage() {
             unit: 'km',
             status: light.withinMaxKm ? 'bad' : light.nearestKm != null && light.nearestKm <= limits.stormApproachKm ? 'warn' : 'ok',
           }}
+          cause={
+            light.withinMaxKm
+              ? `Inside the ${limits.lightningMaxKm} km limit, so technician visits are blocked.`
+              : `Visits stay allowed outside ${limits.lightningMaxKm} km; watch from ${limits.stormApproachKm} km.`
+          }
+        />
+        <KpiTile
+          kpi={{ label: 'Strikes last minute', value: strikesPerMin, status: strikesPerMin > 0 ? 'warn' : 'ok' }}
+          cause={
+            strikesPerMin > 0
+              ? `${light.strikesLast10Min} strikes in the last ten minutes.`
+              : 'No strikes detected in the last minute.'
+          }
         />
       </div>
 
@@ -219,7 +244,7 @@ export function LwmPage() {
                 ))}
               </select>
             </label>
-            <StatusPill tone={scrubbing ? 'info' : 'ok'}>{scrubbing ? `at ${fmtTime(map?.ts ?? mapTs)}` : 'live'}</StatusPill>
+            <StatusPill tone={scrubbing ? 'info' : 'ok'}>{scrubbing ? `at ${fmtTime(map?.ts ?? mapTs)}` : 'Live'}</StatusPill>
           </div>
         }
       >
@@ -234,7 +259,7 @@ export function LwmPage() {
             onChange={(e) => setMapTs(Number(e.target.value))}
             aria-label="Map time"
           />
-          <button type="button" className={scrubbing ? 'primary' : undefined} onClick={() => setMapTs(null)} disabled={!scrubbing}>
+          <button type="button" className="arl-btn" onClick={() => setMapTs(null)} disabled={!scrubbing}>
             Live
           </button>
         </div>
@@ -272,7 +297,7 @@ export function LwmPage() {
 
         <Panel
           title="Lightning"
-          actions={<StatusPill tone={light.withinMaxKm ? 'bad' : light.strikesLast10Min > 0 ? 'warn' : 'ok'}>{light.withinMaxKm ? 'danger' : light.strikesLast10Min > 0 ? 'active' : 'quiet'}</StatusPill>}
+          actions={<StatusPill tone={light.withinMaxKm ? 'bad' : light.strikesLast10Min > 0 ? 'warn' : 'ok'}>{light.withinMaxKm ? 'Danger' : light.strikesLast10Min > 0 ? 'Active' : 'Quiet'}</StatusPill>}
         >
           <LightningMap strikes={network.strikes} limits={limits} derived={light} />
         </Panel>
@@ -304,11 +329,13 @@ export function LwmPage() {
                 </option>
               ))}
             </select>
-            {WINDOWS.map((w) => (
-              <button key={w.hours} type="button" className={hours === w.hours ? 'primary' : undefined} onClick={() => setHours(w.hours)}>
-                {w.label}
-              </button>
-            ))}
+            <div className="seg" role="group" aria-label="Window">
+              {WINDOWS.map((w) => (
+                <button key={w.hours} type="button" className={hours === w.hours ? 'on' : ''} onClick={() => setHours(w.hours)}>
+                  {w.label}
+                </button>
+              ))}
+            </div>
           </div>
         }
       >
@@ -316,12 +343,12 @@ export function LwmPage() {
         {hist && histSeries && histSeries.ts.length > 1 ? (
           <div className="charts">
             <div>
-              <h3>Temperature & wind</h3>
-              <SiteChart ts={histSeries.ts} values={histSeries.tempWind} labels={['°C', 'wind', 'gust']} colors={['#f0b429', '#4cc9f0', '#e05c5c']} axes={[{ scale: 'y', label: '°C' }, { scale: 'y2', label: 'm/s', side: 'right' }]} scales={['y', 'y2', 'y2']} />
+              <h3>Temperature and wind</h3>
+              <SiteChart ts={histSeries.ts} values={histSeries.tempWind} labels={['Temperature', 'Wind', 'Gust']} colors={[colours.ochre, colours.sunset, colours.dust]} axes={[{ scale: 'y', label: '°C' }, { scale: 'y2', label: 'm/s', side: 'right' }]} scales={['y', 'y2', 'y2']} />
             </div>
             <div>
-              <h3>Pressure & battery</h3>
-              <SiteChart ts={histSeries.ts} values={histSeries.pressBatt} labels={['pressure', 'battery']} colors={['#94a3b8', '#38c172']} axes={[{ scale: 'y', label: 'hPa' }, { scale: 'y2', label: 'V', side: 'right' }]} scales={['y', 'y2']} />
+              <h3>Pressure and battery</h3>
+              <SiteChart ts={histSeries.ts} values={histSeries.pressBatt} labels={['Pressure', 'Battery']} colors={[colours.inkMuted, colours.accent]} axes={[{ scale: 'y', label: 'hPa' }, { scale: 'y2', label: 'V', side: 'right' }]} scales={['y', 'y2']} />
             </div>
           </div>
         ) : (
@@ -346,15 +373,15 @@ export function LwmPage() {
         <dl className="facts">
           <div>
             <dt>Online</dt>
-            <dd>{network.global.online == null ? '—' : network.global.online ? 'yes' : 'no'}</dd>
+            <dd>{network.global.online == null ? '—' : network.global.online ? 'Yes' : 'No'}</dd>
           </div>
           <div>
             <dt>Active alerts</dt>
-            <dd>{network.global.activeAlerts?.length ? network.global.activeAlerts.join(', ') : 'none'}</dd>
+            <dd>{network.global.activeAlerts?.length ? network.global.activeAlerts.join(', ') : 'None'}</dd>
           </div>
           <div>
             <dt>Last update</dt>
-            <dd className="mono">{fmtTime(nowTs)}</dd>
+            <dd className="arl-num">{fmtTime(nowTs)}</dd>
           </div>
           <div>
             <dt>Nearest strike</dt>

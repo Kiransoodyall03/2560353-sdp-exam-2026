@@ -10,6 +10,7 @@ import { VirtualList } from '../components/VirtualList';
 import { useResearcherAction } from '../lib/actions';
 import { api, errorText } from '../lib/api';
 import { fmtNum, fmtTs } from '../lib/format';
+import { OP_TEXT, SERVICE_TEXT, SEVERITY_TEXT, SVC_TEXT } from '../lib/labels';
 import { useLive } from '../lib/live';
 
 const SEVERITIES: Severity[] = ['critical', 'warning', 'info'];
@@ -141,7 +142,7 @@ export function AnnunciatorPage() {
           <option value="">All services</option>
           {SERVICES.map((s) => (
             <option key={s} value={s}>
-              {s.toUpperCase()}
+              {SERVICE_TEXT[s]}
             </option>
           ))}
         </select>
@@ -149,7 +150,7 @@ export function AnnunciatorPage() {
           <option value="">All severities</option>
           {SEVERITIES.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {SEVERITY_TEXT[s]}
             </option>
           ))}
         </select>
@@ -182,24 +183,33 @@ export function AnnunciatorPage() {
 
       <div className="bulkbar">
         <span>{sel.length} selected</span>
-        <button onClick={() => setSelected(new Set(filtered.filter((a) => a.opState !== 'resolved').map((a) => a.key)))}>
+        <button
+          type="button"
+          className="arl-btn"
+          onClick={() => setSelected(new Set(filtered.filter((a) => a.opState !== 'resolved').map((a) => a.key)))}
+        >
           Select all shown
         </button>
-        <button onClick={() => setSelected(new Set())} disabled={!sel.length}>
-          Clear
+        <button type="button" className="arl-btn" onClick={() => setSelected(new Set())} disabled={!sel.length}>
+          Clear selection
         </button>
         <input
           className="grow"
-          placeholder="Note (optional for acknowledge, required to resolve)"
+          placeholder="Note (optional to acknowledge, required to resolve)"
           aria-label="Note for bulk action"
           maxLength={2000}
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />
-        <button className="primary" disabled={!canAck.length || action.busy} onClick={() => void bulk('ack', canAck)}>
+        <button
+          type="button"
+          className="arl-btn arl-btn--primary"
+          disabled={!canAck.length || action.busy}
+          onClick={() => void bulk('ack', canAck)}
+        >
           Acknowledge {canAck.length || ''}
         </button>
-        <button disabled={!canResolve.length || action.busy} onClick={() => void bulk('resolve', canResolve)}>
+        <button type="button" className="arl-btn" disabled={!canResolve.length || action.busy} onClick={() => void bulk('resolve', canResolve)}>
           Resolve {canResolve.length || ''}
         </button>
       </div>
@@ -214,7 +224,7 @@ export function AnnunciatorPage() {
           <span>Entity</span>
           <span>Value / limit</span>
           <span>Message</span>
-          <span>Raised (SAST)</span>
+          <span>Raised</span>
           <span>State</span>
         </div>
         {rows.length === 0 ? (
@@ -236,11 +246,11 @@ export function AnnunciatorPage() {
     if (r.kind === 'sev') {
       const g = r.severity;
       return (
-        <button className={`group-head sev-bg-${r.severity}`} onClick={() => toggleGroup(g)} aria-expanded={!collapsed.has(g)}>
+        <button type="button" className={`group-head sev-bg-${r.severity}`} onClick={() => toggleGroup(g)} aria-expanded={!collapsed.has(g)}>
           <span aria-hidden="true">{collapsed.has(g) ? '▸' : '▾'}</span>
           <SeverityBadge severity={r.severity} />
           <span>
-            {r.count} alerts · {r.unacked} unacked
+            {r.count} alerts · {r.unacked} unacknowledged
           </span>
         </button>
       );
@@ -248,11 +258,11 @@ export function AnnunciatorPage() {
     if (r.kind === 'svc') {
       const g = `${r.severity}/${r.service}`;
       return (
-        <button className="group-sub" onClick={() => toggleGroup(g)} aria-expanded={!collapsed.has(g)}>
+        <button type="button" className="group-sub" onClick={() => toggleGroup(g)} aria-expanded={!collapsed.has(g)}>
           <span aria-hidden="true">{collapsed.has(g) ? '▸' : '▾'}</span>
-          <strong>{r.service.toUpperCase()}</strong>
+          <strong>{SERVICE_TEXT[r.service]}</strong>
           <span className="muted">
-            {r.count} · {r.unacked} unacked
+            {r.count} · {r.unacked} unacknowledged
           </span>
         </button>
       );
@@ -279,9 +289,9 @@ export function AnnunciatorPage() {
         <span>
           <SeverityBadge severity={a.severity} compact />
           {a.maxSeverity !== a.severity && (
-            <span className="muted small" title="peak severity">
+            <span className="muted small" title="Highest severity this alert reached">
               {' '}
-              peak {a.maxSeverity}
+              peak {SEVERITY_TEXT[a.maxSeverity]}
             </span>
           )}
         </span>
@@ -297,15 +307,17 @@ export function AnnunciatorPage() {
         <span className="ellipsis">
           <EntityLink alert={a} />
         </span>
-        <span className="mono small">{valueVsLimit(a)}</span>
+        <span className="mono small ellipsis" title={valueVsLimit(a)}>
+          {valueVsLimit(a)}
+        </span>
         <span className="ellipsis" title={a.message}>
           {a.message}
         </span>
         <span className="mono small">{fmtTs(a.raisedTs)}</span>
         <span className="state-cell small">
-          <span className={a.svcState === 'raised' ? 'sev-warning' : 'muted'}>{a.svcState}</span>
+          <span className={a.svcState === 'raised' ? 'sev-warning' : 'muted'}>{SVC_TEXT[a.svcState] ?? a.svcState}</span>
           <span className={`op op-${a.opState}`}>
-            {a.opState}
+            {OP_TEXT[a.opState] ?? a.opState}
             {a.ackName && a.opState !== 'unacked' && <span className="muted"> · {a.ackName}</span>}
           </span>
         </span>

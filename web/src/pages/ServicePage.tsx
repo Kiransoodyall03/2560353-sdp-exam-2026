@@ -2,9 +2,10 @@
 // driven by $topology and the `svc:<id>` stream.
 import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { isServiceId, type ServiceTopology } from '../../../shared/types';
-import { Empty, KpiTile, Loading, Panel, StatusPill } from '../components/ui';
-import { fmtAgo, fmtAny } from '../lib/format';
+import { isServiceId, type AlertService, type ServiceTopology } from '../../../shared/types';
+import { Empty, KpiTile, Loading, Panel, SeverityBadge, StatusPill } from '../components/ui';
+import { fmtAgo, fmtAny, fmtTs } from '../lib/format';
+import { SERVICE_TEXT } from '../lib/labels';
 import { useLive } from '../lib/live';
 import { useKeyedChannel } from '../lib/sse';
 
@@ -37,28 +38,33 @@ export function ServicePage() {
   const silent = new Set(h?.silent.map((s) => `${s.entity}/${s.stream}`) ?? []);
   const alertsFor = (id: string) => Object.values(live.alerts).filter((a) => a.service === svc && a.entity === id).length;
 
+  const name = valid ? (SERVICE_TEXT[svc as AlertService] ?? svc) : svc;
+
   return (
     <div className="page">
-      <h1>
-        {svc.toUpperCase()} <span className="muted">{topology ? `topology v${topology.version}` : ''}</span>
+      <h1 className="row gap">
+        <span>{name}</span>
+        <StatusPill tone={h?.online === true ? 'ok' : h?.online === false ? 'bad' : 'idle'}>
+          {h?.online === true ? 'Online' : h?.online === false ? 'Offline' : 'Unknown'}
+        </StatusPill>
+        <span className="muted small">{topology ? `topology v${topology.version}` : ''}</span>
       </h1>
-      {status !== 'open' && <div className="flag warn">◆ Live stream {status}</div>}
-      <div className="kpis wide">
-        <KpiTile
-          kpi={{
-            label: 'Service',
-            value: h?.online === true ? 'online' : h?.online === false ? 'OFFLINE' : 'unknown',
-            status: h?.online === true ? 'ok' : h?.online === false ? 'bad' : undefined,
-          }}
-        />
-        {ov?.kpis.map((k) => <KpiTile key={k.label} kpi={k} />)}
+      {status !== 'open' && (
+        <div className="flag warn">
+          <SeverityBadge severity="warning" compact /> Live stream {status}
+        </div>
+      )}
+      <div className="readings">
+        {ov?.kpis.slice(0, 3).map((k) => (
+          <KpiTile key={k.label} kpi={k} />
+        ))}
         <KpiTile kpi={{ label: 'Open alerts', value: ov?.alerts.open ?? 0, status: ov?.alerts.unacked ? 'warn' : 'ok' }} />
       </div>
       <Panel
         title={`Entities (${entities.length})`}
         actions={
-          <Link to={`/alerts?service=${svc}`} className="button">
-            Alerts for {svc.toUpperCase()}
+          <Link to={`/alerts?service=${svc}`} className="arl-btn">
+            Alerts for {name}
           </Link>
         }
       >
@@ -82,7 +88,9 @@ export function ServicePage() {
                   <tr key={e.id}>
                     <td className="mono">{e.id}</td>
                     <td>{kinds.get(e.id) ?? '—'}</td>
-                    <td>{fmtAgo(e.lastTs, simNow)}</td>
+                    <td>
+                      <span title={fmtAgo(e.lastTs, simNow)}>{fmtTs(e.lastTs)}</span>
+                    </td>
                     <td className="small">
                       {Object.entries(e.state).map(([k, v]) => (
                         <div key={k}>

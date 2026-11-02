@@ -55,7 +55,8 @@ export function useRtaLive(): RtaLive {
   }, [items, status, simTs]);
 }
 
-const SUBARRAY_COLOURS = ['#4cc9f0', '#f72585', '#b5e48c', '#ffb703', '#9d4edd', '#ff7b54'];
+/** Sub-array outlines follow the series order: accent, sunset, ochre, dust. */
+const SUBARRAY_COLOURS = ['var(--accent)', 'var(--sunset)', 'var(--ochre)', 'var(--dust)'];
 
 /** Stable colour per sub-array name (sorted order), used for grid outlines and cards. */
 export function subarrayColours(names: string[]): Map<string, string> {

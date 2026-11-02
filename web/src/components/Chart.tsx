@@ -2,7 +2,9 @@
 import { useEffect, useRef } from 'react';
 import uPlot, { type AlignedData, type Options, type Series } from 'uplot';
 import 'uplot/dist/uPlot.min.css';
+import { cssVar, useThemeColors } from '../lib/colors';
 import { TZ } from '../lib/format';
+import { useTheme } from '../lib/theme';
 
 export interface ChartSeries {
   label: string;
@@ -24,7 +26,12 @@ export interface ChartAxis {
   range?: [number | null, number | null];
 }
 
-const AXIS = { stroke: '#9aa4b2', grid: { stroke: '#232a34', width: 1 }, ticks: { stroke: '#2f3845', width: 1 } };
+const axisStyle = (inkMuted: string, line: string) => ({
+  stroke: inkMuted,
+  grid: { stroke: line, width: 1 },
+  ticks: { stroke: line, width: 1 },
+  font: `12px ${cssVar('--font-data') || 'sans-serif'}`,
+});
 
 export function Chart({
   ts,
@@ -44,7 +51,11 @@ export function Chart({
 }) {
   const host = useRef<HTMLDivElement>(null);
   const plot = useRef<uPlot | null>(null);
-  const shape = JSON.stringify({ series, axes, height, title });
+  const { theme } = useTheme();
+  const c = useThemeColors();
+  const AXIS = axisStyle(c.inkMuted, c.line);
+  // the theme is part of the shape so the plot is rebuilt with the new palette
+  const shape = JSON.stringify({ series, axes, height, title, theme });
 
   useEffect(() => {
     const el = host.current;

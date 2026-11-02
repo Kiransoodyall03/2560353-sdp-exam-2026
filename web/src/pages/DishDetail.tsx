@@ -9,9 +9,10 @@ import { ControlPanel } from '../components/ControlPanel';
 import { alertHref } from '../components/EntityLink';
 import { Empty, ErrorBox, Loading, Panel, SeverityBadge, StatusPill, type Tone } from '../components/ui';
 import { api, errorText } from '../lib/api';
+import { useThemeColors } from '../lib/colors';
 import { deg, fmtAny, fmtNum, fmtTs, kToC } from '../lib/format';
 import { useLive } from '../lib/live';
-import { DISH_ICON, useRtaLive } from '../lib/rta';
+import { useRtaLive } from '../lib/rta';
 
 interface History {
   dish: string;
@@ -42,10 +43,22 @@ const TONE: Record<DishDTO['status'], Tone> = {
   unknown: 'idle',
 };
 
+const STATUS_TEXT: Record<DishDTO['status'], string> = {
+  ok: 'In service',
+  scanning: 'Scanning',
+  stowed: 'Stowed',
+  disabled: 'Disabled',
+  fault: 'Fault',
+  warning: 'Warning',
+  offline: 'Offline',
+  unknown: 'Unknown',
+};
+
 export function DishDetailPage() {
   const { id = '' } = useParams();
   const rta = useRtaLive();
   const live = useLive();
+  const colours = useThemeColors();
   const d = rta.dishById.get(id);
   const [hours, setHours] = useState(6);
   const [hist, setHist] = useState<History | null>(null);
@@ -93,13 +106,11 @@ export function DishDetailPage() {
   return (
     <div className="page">
       <p>
-        <Link to="/rta">← Radio Telescope Array</Link>
+        <Link to="/rta">← Radio telescope</Link>
       </p>
       <h1 className="row gap">
-        <span className="mono">{d.id}</span>
-        <StatusPill tone={TONE[d.status]}>
-          {DISH_ICON[d.status]} {d.status}
-        </StatusPill>
+        <span className="arl-num">{d.id}</span>
+        <StatusPill tone={TONE[d.status]}>{STATUS_TEXT[d.status]}</StatusPill>
         <span className="muted small">{d.statusReason}</span>
       </h1>
       <div className="grid-2">
@@ -116,12 +127,26 @@ export function DishDetailPage() {
               {fmtAny(d.enabled)} / {fmtAny(d.stowed)}
             </dd>
             <dt>Fault code</dt>
-            <dd className={d.faultCode && d.faultCode !== 'none' ? 'sev-critical' : ''}>{d.faultCode ?? '—'}</dd>
+            <dd>
+              {d.faultCode ?? '—'}
+              {d.faultCode && d.faultCode !== 'none' && (
+                <>
+                  {' '}
+                  <SeverityBadge severity="critical">Fault</SeverityBadge>
+                </>
+              )}
+            </dd>
             <dt>Temperature</dt>
             <dd>{d.temperatureK == null ? '—' : `${fmtNum(kToC(d.temperatureK), 1)} °C (${fmtNum(d.temperatureK, 1)} K)`}</dd>
             <dt>Power</dt>
             <dd>
-              {fmtNum(d.powerW, 0)} W{d.powerOutlier && <span className="sev-warning"> ◆ outlier vs array</span>}
+              {fmtNum(d.powerW, 0)} W
+              {d.powerOutlier && (
+                <>
+                  {' '}
+                  <SeverityBadge severity="warning">Outlier vs array</SeverityBadge>
+                </>
+              )}
             </dd>
             <dt>System temperature</dt>
             <dd>{fmtNum(d.systemTemperatureK, 1)} K</dd>
@@ -153,7 +178,7 @@ export function DishDetailPage() {
               {d.meanSnrDb != null && <span className="muted"> · mean SNR {fmtNum(d.meanSnrDb, 1)} dB</span>}
             </dd>
             <dt>Last data</dt>
-            <dd className="mono">
+            <dd className="arl-num">
               {fmtTs(d.lastTs)} <span className="muted">({d.lastStream ?? '—'})</span>
             </dd>
           </dl>
@@ -205,7 +230,7 @@ export function DishDetailPage() {
         actions={
           <div className="seg" role="group" aria-label="Window">
             {[1, 6, 24, 72].map((h) => (
-              <button key={h} className={h === hours ? 'on' : ''} onClick={() => setHours(h)}>
+              <button key={h} type="button" className={h === hours ? 'on' : ''} onClick={() => setHours(h)}>
                 {h} h
               </button>
             ))}
@@ -227,8 +252,8 @@ export function DishDetailPage() {
                   { scale: 'w', label: 'W/m²', side: 'right', range: [0, null] },
                 ]}
                 series={[
-                  { label: 'dish temp', color: '#06d6a0', scale: 'c' },
-                  { label: 'irradiance (LWM)', color: '#ffd166', scale: 'w' },
+                  { label: 'Dish temp', color: colours.accent, scale: 'c' },
+                  { label: 'Irradiance (LWM)', color: colours.ochre, scale: 'w' },
                 ]}
               />
             </div>
@@ -242,8 +267,8 @@ export function DishDetailPage() {
                   { scale: 'k', label: 'K', side: 'right' },
                 ]}
                 series={[
-                  { label: 'power', color: '#4cc9f0', scale: 'w' },
-                  { label: 'system temp', color: '#f78c6b', scale: 'k' },
+                  { label: 'Power', color: colours.sunset, scale: 'w' },
+                  { label: 'System temp', color: colours.dust, scale: 'k' },
                 ]}
               />
             </div>
@@ -253,12 +278,12 @@ export function DishDetailPage() {
                 ts={charts.pointing.ts}
                 values={charts.pointing.values}
                 axes={[
-                  { scale: 'el', label: 'elevation °' },
-                  { scale: 'az', label: 'azimuth °', side: 'right', range: [0, 360] },
+                  { scale: 'el', label: 'Elevation °' },
+                  { scale: 'az', label: 'Azimuth °', side: 'right', range: [0, 360] },
                 ]}
                 series={[
-                  { label: 'elevation', color: '#b5e48c', scale: 'el' },
-                  { label: 'azimuth', color: '#9d4edd', scale: 'az' },
+                  { label: 'Elevation', color: colours.accent, scale: 'el' },
+                  { label: 'Azimuth', color: colours.sunset, scale: 'az' },
                 ]}
               />
             </div>
@@ -269,7 +294,7 @@ export function DishDetailPage() {
                   ts={charts.snr.ts}
                   values={charts.snr.values}
                   axes={[{ scale: 'db', label: 'dB' }]}
-                  series={[{ label: 'SNR', color: '#ef476f', scale: 'db', width: 1 }]}
+                  series={[{ label: 'SNR', color: colours.accent, scale: 'db', width: 1 }]}
                 />
               </div>
             )}

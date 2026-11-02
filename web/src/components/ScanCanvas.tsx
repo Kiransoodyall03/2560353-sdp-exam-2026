@@ -1,33 +1,14 @@
-// Draws a ScanImage-like grid onto a canvas (north up), with an optional holes overlay.
+// Draws a ScanImage-like grid onto a canvas (north up), with an optional holes overlay. The ramp comes
+// from the design tokens, so the image is redrawn when the theme changes.
 import { useEffect, useRef, useState } from 'react';
+import { rampAt, sequentialStops, toRgb, useThemeColors, type RGB, type ThemeColors } from '../lib/colors';
 
 export type Palette = 'gray' | 'inferno';
 
-// inferno, 9 stops (matplotlib), linearly interpolated
-const INFERNO: [number, number, number][] = [
-  [0, 0, 4],
-  [31, 12, 72],
-  [85, 15, 109],
-  [136, 34, 106],
-  [186, 54, 85],
-  [227, 89, 51],
-  [249, 140, 10],
-  [249, 201, 50],
-  [252, 255, 164],
-];
-
-function colour(v: number, palette: Palette): [number, number, number] {
+function colour(v: number, palette: Palette, c: ThemeColors): RGB {
   const x = Math.min(1, Math.max(0, v));
-  if (palette === 'gray') {
-    const g = Math.round(x * 255);
-    return [g, g, g];
-  }
-  const p = x * (INFERNO.length - 1);
-  const i = Math.min(INFERNO.length - 2, Math.floor(p));
-  const f = p - i;
-  const a = INFERNO[i]!;
-  const b = INFERNO[i + 1]!;
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  const stops = palette === 'gray' ? [toRgb(c.surfaceSunken), toRgb(c.ink)] : sequentialStops(c);
+  return rampAt(stops, x);
 }
 
 export interface GridImage {
@@ -54,19 +35,23 @@ export function ScanCanvas({
   label: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const c = useThemeColors();
 
   useEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    const ctx = c.getContext('2d');
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
     if (!image) {
-      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       return;
     }
     const n = image.n;
-    c.width = n;
-    c.height = n;
+    canvas.width = n;
+    canvas.height = n;
+    const noData = toRgb(c.surfaceSunken);
+    const unfilled = toRgb(c.alarmWarning);
+    const filledIn = toRgb(c.sunset);
     const data = ctx.createImageData(n, n);
     const holes = showHoles ? new Set(image.holes ?? []) : null;
     const filled = showHoles ? new Set(image.filled ?? []) : null;
@@ -74,13 +59,13 @@ export function ScanCanvas({
       const v = image.values[i];
       const o = i * 4;
       if (holes?.has(i) && !filled?.has(i)) {
-        data.data.set([0, 140, 255, 255], o); // unfilled hole
+        data.data.set([unfilled[0], unfilled[1], unfilled[2], 255], o); // hole with no sample
       } else if (filled?.has(i)) {
-        data.data.set([0, 200, 255, 255], o); // filled hole
+        data.data.set([filledIn[0], filledIn[1], filledIn[2], 255], o); // hole filled from neighbours
       } else if (v === null || v === undefined || Number.isNaN(v)) {
-        data.data.set([18, 22, 28, 255], o); // no data yet
+        data.data.set([noData[0], noData[1], noData[2], 255], o); // no data yet
       } else {
-        const [r, g, b] = colour(v, palette);
+        const [r, g, b] = colour(v, palette, c);
         data.data[o] = r;
         data.data[o + 1] = g;
         data.data[o + 2] = b;
@@ -88,7 +73,7 @@ export function ScanCanvas({
       }
     }
     ctx.putImageData(data, 0, 0);
-  }, [image, palette, showHoles]);
+  }, [image, palette, showHoles, c]);
 
   return (
     <canvas

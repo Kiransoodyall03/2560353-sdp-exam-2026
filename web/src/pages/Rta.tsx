@@ -6,8 +6,9 @@ import { alignSeries, Chart, holdForward } from '../components/Chart';
 import { CommandHistory } from '../components/CommandHistory';
 import { ControlPanel } from '../components/ControlPanel';
 import { DishGrid, DishLegend } from '../components/DishGrid';
-import { ErrorBox, KpiTile, Loading, Panel, StatusPill, type Tone } from '../components/ui';
+import { Empty, ErrorBox, KpiTile, Loading, Panel, SeverityBadge, StatusPill, type Tone } from '../components/ui';
 import { api, errorText } from '../lib/api';
+import { useThemeColors } from '../lib/colors';
 import { fmtDuration, fmtNum, fmtTs } from '../lib/format';
 import { BAND_TEXT, subarrayColours, useRtaLive } from '../lib/rta';
 import { ScanTable } from './Scans';
@@ -26,6 +27,8 @@ export function RtaPage() {
   if (!rta.global && rta.dishes.length === 0) return <Loading what="radio telescope array" />;
   const g = rta.global;
   const running = rta.subarrays.filter((s) => s.scanState === 'running').length;
+  const active = g?.activeDishes ?? null;
+  const axis = Math.max(active ?? 0, g?.minActive ?? 0, 1);
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -36,27 +39,45 @@ export function RtaPage() {
 
   return (
     <div className="page">
-      <h1>Radio Telescope Array</h1>
-      {rta.status !== 'open' && <div className="flag warn">◆ Live stream {rta.status}</div>}
-      <div className="kpis wide">
+      <h1>Radio telescope</h1>
+      {rta.status !== 'open' && (
+        <div className="flag warn">
+          <SeverityBadge severity="warning" compact /> Live stream {rta.status}
+        </div>
+      )}
+      <div className="readings">
         <KpiTile
           kpi={{
             label: 'Dishes in service',
-            value: g?.activeDishes == null ? null : `${g.activeDishes} / ${g.minActive}`,
-            status: g?.activeDishes == null ? undefined : g.activeDishes < g.minActive ? 'bad' : 'ok',
+            value: active,
+            unit: 'dishes',
+            status: active == null ? undefined : active < (g?.minActive ?? 0) ? 'bad' : 'ok',
           }}
+          fill={active == null ? undefined : active / axis}
+          limit={g ? { at: g.minActive / axis, label: `Minimum ${g.minActive} dishes` } : undefined}
+          cause={`Minimum for observing is ${g?.minActive ?? '—'} dishes.`}
         />
         <KpiTile
           kpi={{
-            label: 'Wind stow',
-            value: g?.windStow == null ? null : g.windStow ? 'ENGAGED' : 'off',
+            label: 'Max gust',
+            value: g?.maxGustMs == null ? null : fmtNum(g.maxGustMs, 1),
+            unit: 'm/s',
             status: g?.windStow ? 'warn' : 'ok',
           }}
+          cause={g?.windStow ? 'Wind stow is engaged, so new scans are blocked.' : 'Highest gust reported by the weather network.'}
         />
-        <KpiTile kpi={{ label: 'Max gust (LWM)', value: g?.maxGustMs == null ? null : fmtNum(g.maxGustMs, 1), unit: 'm/s' }} />
-        <KpiTile kpi={{ label: 'Stowed dishes', value: g?.stowedCount ?? null, status: g?.stowedCount ? 'warn' : 'ok' }} />
-        <KpiTile kpi={{ label: 'Scanning sub-arrays', value: running }} />
-        <KpiTile kpi={{ label: 'Min scan SNR', value: g?.minSnrDb ?? null, unit: 'dB' }} />
+        <KpiTile
+          kpi={{
+            label: 'Stowed dishes',
+            value: g?.stowedCount ?? null,
+            status: g?.stowedCount ? 'warn' : 'ok',
+          }}
+          cause={`${running} of ${rta.subarrays.length} sub-arrays are scanning.`}
+        />
+        <KpiTile
+          kpi={{ label: 'Min scan SNR', value: g?.minSnrDb ?? null, unit: 'dB' }}
+          cause="Lowest signal-to-noise ratio across the sub-arrays."
+        />
       </div>
 
       <div className="rta-layout">
@@ -65,26 +86,32 @@ export function RtaPage() {
           actions={
             <>
               {highlight && (
-                <button onClick={() => setParams({}, { replace: true })}>Show all (highlighting {highlight})</button>
+                <button type="button" className="arl-btn" onClick={() => setParams({}, { replace: true })}>
+                  Show all (highlighting {highlight})
+                </button>
               )}
-              <span className="muted small">click = details · shift-click = select</span>
+              <span className="muted small">Click a dish for details, shift-click to select.</span>
             </>
           }
         >
-          <DishGrid
-            dishes={rta.dishes}
-            colours={colours}
-            selected={selected}
-            highlight={highlight}
-            windStow={!!g?.windStow}
-            onOpen={(id) => nav(`/rta/dish/${id}`)}
-            onToggle={toggle}
-          />
+          {rta.dishes.length === 0 ? (
+            <Empty>No dish telemetry yet: the array reports its dishes once the service is streaming.</Empty>
+          ) : (
+            <DishGrid
+              dishes={rta.dishes}
+              colours={colours}
+              selected={selected}
+              highlight={highlight}
+              windStow={!!g?.windStow}
+              onOpen={(id) => nav(`/rta/dish/${id}`)}
+              onToggle={toggle}
+            />
+          )}
           <DishLegend />
           {g?.windStow && (
-            <p className="sev-warning small">
-              ◆ Wind stow engaged{g.windStowSinceTs ? ` since ${fmtTs(g.windStowSinceTs)}` : ''}. New scans are blocked until it
-              clears.
+            <p className="small">
+              <SeverityBadge severity="warning">Wind stow engaged</SeverityBadge>{' '}
+              {g.windStowSinceTs ? `since ${fmtTs(g.windStowSinceTs)}. ` : ''}New scans are blocked until it clears.
             </p>
           )}
           {selected.size > 0 && <Selection ids={[...selected]} byId={rta.dishById} onClear={() => setSelected(new Set())} />}
@@ -95,7 +122,7 @@ export function RtaPage() {
             <SubarrayCard
               key={s.id}
               s={s}
-              colour={colours.get(s.id) ?? '#888'}
+              colour={colours.get(s.id) ?? 'var(--ink-muted)'}
               simNow={rta.simTs}
               onHighlight={() => setParams({ subarray: s.id }, { replace: true })}
             />
@@ -115,7 +142,7 @@ export function RtaPage() {
       <Panel
         title="Recent scans"
         actions={
-          <Link to="/rta/scans" className="button">
+          <Link to="/rta/scans" className="arl-btn">
             Scan library
           </Link>
         }
@@ -137,7 +164,9 @@ function Selection({ ids, byId, onClear }: { ids: string[]; byId: Map<string, Di
       <span className="muted small">{[...counts].map(([s, n]) => `${n} ${s}`).join(' · ')}</span>
       <div className="mono small">{sorted.join(', ')}</div>
       <div className="row gap">
-        <button onClick={onClear}>Clear selection</button>
+        <button type="button" className="arl-btn" onClick={onClear}>
+          Clear selection
+        </button>
       </div>
       <ControlPanel service="rta" entities={sorted} kinds={['dish']} title="Batch dish commands" collapsible defaultOpen />
     </div>
@@ -159,14 +188,14 @@ function SubarrayCard({
 }) {
   const target = typeof s.target === 'string' ? s.target : s.target ? 'custom RA/Dec' : null;
   return (
-    <section className="panel subarray" style={{ borderLeftColor: colour }}>
+    <section className="arl-panel subarray" style={{ borderLeftColor: colour }}>
       <header className="panel-head">
-        <h2>
-          <button className="link" onClick={onHighlight} title="Highlight members on the grid">
+        <h3>
+          <button type="button" className="link" onClick={onHighlight} title="Highlight members on the grid">
             {s.id}
           </button>
-        </h2>
-        <StatusPill tone={SCAN_TONE[s.scanState ?? ''] ?? 'idle'}>{s.scanState ?? 'idle'}</StatusPill>
+        </h3>
+        <StatusPill tone={SCAN_TONE[s.scanState ?? ''] ?? 'idle'}>{s.scanState ?? 'Idle'}</StatusPill>
       </header>
       <dl className="dl compact">
         <dt>Target</dt>
@@ -182,10 +211,25 @@ function SubarrayCard({
         <dt>Members</dt>
         <dd>
           {s.health.inService}/{s.health.members} in service
-          {s.health.fault > 0 && <span className="sev-critical"> · ▲ {s.health.fault} fault</span>}
-          {s.health.stowed > 0 && <span className="sev-warning"> · {s.health.stowed} stowed</span>}
+          {s.health.fault > 0 && (
+            <>
+              {' '}
+              <SeverityBadge severity="critical">{s.health.fault} fault</SeverityBadge>
+            </>
+          )}
+          {s.health.stowed > 0 && (
+            <>
+              {' '}
+              <SeverityBadge severity="warning">{s.health.stowed} stowed</SeverityBadge>
+            </>
+          )}
           {s.health.disabled > 0 && <span className="muted"> · {s.health.disabled} disabled</span>}
-          {s.health.offline > 0 && <span className="sev-critical"> · {s.health.offline} offline</span>}
+          {s.health.offline > 0 && (
+            <>
+              {' '}
+              <SeverityBadge severity="critical">{s.health.offline} offline</SeverityBadge>
+            </>
+          )}
         </dd>
         <dt>Next scan</dt>
         <dd>{s.nextScan ? `${fmtTs(s.nextScan)} (in ${fmtDuration(s.nextScan - (simNow ?? s.nextScan))})` : '—'}</dd>
@@ -221,6 +265,7 @@ interface Trend {
 }
 
 function Trends() {
+  const colours = useThemeColors();
   const [hours, setHours] = useState(6);
   const [trend, setTrend] = useState<Trend | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -273,7 +318,7 @@ function Trends() {
       actions={
         <div className="seg" role="group" aria-label="Window">
           {[1, 3, 6, 24].map((h) => (
-            <button key={h} className={h === hours ? 'on' : ''} onClick={() => setHours(h)}>
+            <button key={h} type="button" className={h === hours ? 'on' : ''} onClick={() => setHours(h)}>
               {h} h
             </button>
           ))}
@@ -291,10 +336,10 @@ function Trends() {
               <Chart
                 ts={active.ts}
                 values={active.values}
-                axes={[{ scale: 'n', label: 'dishes', range: [0, null] }]}
+                axes={[{ scale: 'n', label: 'Dishes', range: [0, null] }]}
                 series={[
-                  { label: 'in service', color: '#4cc9f0', step: true, width: 2 },
-                  { label: `minimum (${trend.minActive})`, color: '#ef476f', dash: [6, 4] },
+                  { label: 'In service', color: colours.accent, step: true, width: 2 },
+                  { label: `Minimum (${trend.minActive})`, color: colours.ink, dash: [6, 4] },
                 ]}
               />
             )}
@@ -306,14 +351,14 @@ function Trends() {
                 ts={wind.ts}
                 values={wind.values}
                 axes={[
-                  { scale: 'ms', label: 'gust m/s', range: [0, null] },
-                  { scale: 'n', label: 'stowed', side: 'right', range: [0, null] },
+                  { scale: 'ms', label: 'Gust m/s', range: [0, null] },
+                  { scale: 'n', label: 'Stowed', side: 'right', range: [0, null] },
                 ]}
                 series={[
-                  { label: 'max gust', color: '#ffd166', scale: 'ms' },
-                  { label: 'stowed dishes', color: '#f78c6b', scale: 'n', step: true, width: 2 },
+                  { label: 'Max gust', color: colours.ochre, scale: 'ms' },
+                  { label: 'Stowed dishes', color: colours.sunset, scale: 'n', step: true, width: 2 },
                   ...(trend.windStowGustMs
-                    ? [{ label: `stow limit (${trend.windStowGustMs} m/s)`, color: '#ef476f', scale: 'ms', dash: [6, 4] }]
+                    ? [{ label: `Stow limit (${trend.windStowGustMs} m/s)`, color: colours.ink, scale: 'ms', dash: [6, 4] }]
                     : []),
                 ]}
               />
@@ -330,9 +375,9 @@ function Trends() {
                   { scale: 'w', label: 'W/m²', side: 'right', range: [0, null] },
                 ]}
                 series={[
-                  { label: 'mean dish temp', color: '#06d6a0', scale: 'c' },
-                  { label: 'max dish temp', color: '#ef476f', scale: 'c', width: 1 },
-                  { label: 'irradiance', color: '#ffd166', scale: 'w' },
+                  { label: 'Mean dish temp', color: colours.accent, scale: 'c' },
+                  { label: 'Max dish temp', color: colours.sunset, scale: 'c', width: 1 },
+                  { label: 'Irradiance', color: colours.ochre, scale: 'w' },
                 ]}
               />
             )}
